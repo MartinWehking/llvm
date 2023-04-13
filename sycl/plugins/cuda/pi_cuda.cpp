@@ -520,6 +520,14 @@ CUstream _pi_queue::get_next_transfer_stream() {
   return res;
 }
 
+_pi_queue::~_pi_queue() {
+  cuda_piContextRelease(context_);
+  cuda_piDeviceRelease(device_);
+
+  if (isInOrderQueue() && cached_event)
+    cached_event.release();
+}
+
 _pi_event::_pi_event(pi_command_type type, pi_context context, pi_queue queue,
                      CUstream stream, pi_uint32 stream_token)
     : commandType_{type}, refCount_{1}, has_ownership_{true},
@@ -592,6 +600,12 @@ bool _pi_event::is_completed() const noexcept {
     }
   }
   return true;
+}
+
+bool _pi_queue::isInOrderQueue() const {
+  // If out-of-order queue property is not set, then this is a in-order queue.
+  return ((this->properties_ & PI_QUEUE_FLAG_OUT_OF_ORDER_EXEC_MODE_ENABLE) ==
+          0);
 }
 
 pi_uint64 _pi_device::get_elapsed_time(CUevent ev) const {
@@ -2723,7 +2737,6 @@ pi_result cuda_piEnqueueMemBufferWrite(pi_queue command_queue, pi_mem buffer,
   assert(command_queue != nullptr);
   pi_result retErr = PI_SUCCESS;
   CUdeviceptr devPtr = buffer->mem_.buffer_mem_.get();
-  std::unique_ptr<_pi_event> retImplEv{nullptr};
 
   try {
     ScopedContext active(command_queue->get_context());
@@ -2733,16 +2746,18 @@ pi_result cuda_piEnqueueMemBufferWrite(pi_queue command_queue, pi_mem buffer,
                                event_wait_list);
 
     if (event) {
-      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
-          PI_COMMAND_TYPE_MEM_BUFFER_WRITE, command_queue, cuStream));
-      retImplEv->start();
+      if (!command_queue->isInOrderQueue())
+        command_queue->cached_event =
+            std::unique_ptr<_pi_event>(_pi_event::make_native(
+                PI_COMMAND_TYPE_MEM_BUFFER_WRITE, command_queue, cuStream));
+      command_queue->cached_event->start();
     }
 
     retErr =
         PI_CHECK_ERROR(cuMemcpyHtoDAsync(devPtr + offset, ptr, size, cuStream));
 
     if (event) {
-      retErr = retImplEv->record();
+      retErr = command_queue->cached_event->record();
     }
 
     if (blocking_write) {
@@ -2750,7 +2765,10 @@ pi_result cuda_piEnqueueMemBufferWrite(pi_queue command_queue, pi_mem buffer,
     }
 
     if (event) {
-      *event = retImplEv.release();
+      if (!command_queue->isInOrderQueue())
+        *event = command_queue->cached_event.release();
+      else
+        command_queue->cached_event->reset_state();
     }
   } catch (pi_result err) {
     retErr = err;
@@ -2769,7 +2787,6 @@ pi_result cuda_piEnqueueMemBufferRead(pi_queue command_queue, pi_mem buffer,
   assert(command_queue != nullptr);
   pi_result retErr = PI_SUCCESS;
   CUdeviceptr devPtr = buffer->mem_.buffer_mem_.get();
-  std::unique_ptr<_pi_event> retImplEv{nullptr};
 
   try {
     ScopedContext active(command_queue->get_context());
@@ -2779,16 +2796,18 @@ pi_result cuda_piEnqueueMemBufferRead(pi_queue command_queue, pi_mem buffer,
                                event_wait_list);
 
     if (event) {
-      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
-          PI_COMMAND_TYPE_MEM_BUFFER_READ, command_queue, cuStream));
-      retImplEv->start();
+      if (!command_queue->isInOrderQueue())
+        command_queue->cached_event =
+            std::unique_ptr<_pi_event>(_pi_event::make_native(
+                PI_COMMAND_TYPE_MEM_BUFFER_READ, command_queue, cuStream));
+      command_queue->cached_event->start();
     }
 
     retErr =
         PI_CHECK_ERROR(cuMemcpyDtoHAsync(ptr, devPtr + offset, size, cuStream));
 
     if (event) {
-      retErr = retImplEv->record();
+      retErr = command_queue->cached_event->record();
     }
 
     if (blocking_read) {
@@ -2796,7 +2815,10 @@ pi_result cuda_piEnqueueMemBufferRead(pi_queue command_queue, pi_mem buffer,
     }
 
     if (event) {
-      *event = retImplEv.release();
+      if (!command_queue->isInOrderQueue())
+        *event = command_queue->cached_event.release();
+      else
+        command_queue->cached_event->reset_state();
     }
 
   } catch (pi_result err) {
@@ -3140,8 +3162,6 @@ pi_result cuda_piEnqueueKernelLaunch(
           (global_work_size[i] + threadsPerBlock[i] - 1) / threadsPerBlock[i];
     }
 
-    std::unique_ptr<_pi_event> retImplEv{nullptr};
-
     pi_uint32 stream_token;
     _pi_stream_guard guard;
     CUstream cuStream = command_queue->get_next_compute_stream(
@@ -3170,10 +3190,12 @@ pi_result cuda_piEnqueueKernelLaunch(
     auto &argIndices = kernel->get_arg_indices();
 
     if (event) {
-      retImplEv = std::unique_ptr<_pi_event>(
-          _pi_event::make_native(PI_COMMAND_TYPE_NDRANGE_KERNEL, command_queue,
-                                 cuStream, stream_token));
-      retImplEv->start();
+      if (!command_queue->cached_event) { // Reuse cached event if existent
+        command_queue->cached_event = std::unique_ptr<_pi_event>(
+            _pi_event::make_native(PI_COMMAND_TYPE_NDRANGE_KERNEL,
+                                   command_queue, cuStream, stream_token));
+      }
+      command_queue->cached_event->start();
     }
 
     // Set local mem max size if env var is present
@@ -3206,8 +3228,12 @@ pi_result cuda_piEnqueueKernelLaunch(
       kernel->clear_local_size();
 
     if (event) {
-      retError = retImplEv->record();
-      *event = retImplEv.release();
+      retError = command_queue->cached_event->record();
+      if (!command_queue->isInOrderQueue()) // Skip releasing for in order
+                                            // queues and reuse former event
+        *event = command_queue->cached_event.release();
+      else
+        command_queue->cached_event->reset_state();
     }
   } catch (pi_result err) {
     retError = err;
@@ -4323,7 +4349,6 @@ pi_result cuda_piEnqueueMemBufferReadRect(
 
   pi_result retErr = PI_SUCCESS;
   CUdeviceptr devPtr = buffer->mem_.buffer_mem_.get();
-  std::unique_ptr<_pi_event> retImplEv{nullptr};
 
   try {
     ScopedContext active(command_queue->get_context());
@@ -4333,9 +4358,12 @@ pi_result cuda_piEnqueueMemBufferReadRect(
                                event_wait_list);
 
     if (event) {
-      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
-          PI_COMMAND_TYPE_MEM_BUFFER_READ_RECT, command_queue, cuStream));
-      retImplEv->start();
+      if (!command_queue->isInOrderQueue()) {
+        command_queue->cached_event =
+            std::unique_ptr<_pi_event>(_pi_event::make_native(
+                PI_COMMAND_TYPE_MEM_BUFFER_READ_RECT, command_queue, cuStream));
+      }
+      command_queue->cached_event->start();
     }
 
     retErr = commonEnqueueMemBufferCopyRect(
@@ -4344,7 +4372,7 @@ pi_result cuda_piEnqueueMemBufferReadRect(
         host_offset, host_row_pitch, host_slice_pitch);
 
     if (event) {
-      retErr = retImplEv->record();
+      retErr = command_queue->cached_event->record();
     }
 
     if (blocking_read) {
@@ -4352,9 +4380,11 @@ pi_result cuda_piEnqueueMemBufferReadRect(
     }
 
     if (event) {
-      *event = retImplEv.release();
+      if (!command_queue->isInOrderQueue())
+        *event = command_queue->cached_event.release();
+      else
+        command_queue->cached_event->reset_state();
     }
-
   } catch (pi_result err) {
     retErr = err;
   }
@@ -4374,7 +4404,6 @@ pi_result cuda_piEnqueueMemBufferWriteRect(
 
   pi_result retErr = PI_SUCCESS;
   CUdeviceptr devPtr = buffer->mem_.buffer_mem_.get();
-  std::unique_ptr<_pi_event> retImplEv{nullptr};
 
   try {
     ScopedContext active(command_queue->get_context());
@@ -4383,9 +4412,12 @@ pi_result cuda_piEnqueueMemBufferWriteRect(
                                event_wait_list);
 
     if (event) {
-      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
-          PI_COMMAND_TYPE_MEM_BUFFER_WRITE_RECT, command_queue, cuStream));
-      retImplEv->start();
+      if (!command_queue->isInOrderQueue()) {
+        command_queue->cached_event = std::unique_ptr<_pi_event>(
+            _pi_event::make_native(PI_COMMAND_TYPE_MEM_BUFFER_WRITE_RECT,
+                                   command_queue, cuStream));
+      }
+      command_queue->cached_event->start();
     }
 
     retErr = commonEnqueueMemBufferCopyRect(
@@ -4394,7 +4426,7 @@ pi_result cuda_piEnqueueMemBufferWriteRect(
         buffer_row_pitch, buffer_slice_pitch);
 
     if (event) {
-      retErr = retImplEv->record();
+      retErr = command_queue->cached_event->record();
     }
 
     if (blocking_write) {
@@ -4402,7 +4434,10 @@ pi_result cuda_piEnqueueMemBufferWriteRect(
     }
 
     if (event) {
-      *event = retImplEv.release();
+      if (!command_queue->isInOrderQueue())
+        *event = command_queue->cached_event.release();
+      else
+        command_queue->cached_event->reset_state();
     }
 
   } catch (pi_result err) {
@@ -4421,8 +4456,6 @@ pi_result cuda_piEnqueueMemBufferCopy(pi_queue command_queue, pi_mem src_buffer,
     return PI_ERROR_INVALID_QUEUE;
   }
 
-  std::unique_ptr<_pi_event> retImplEv{nullptr};
-
   try {
     ScopedContext active(command_queue->get_context());
     pi_result result;
@@ -4432,9 +4465,12 @@ pi_result cuda_piEnqueueMemBufferCopy(pi_queue command_queue, pi_mem src_buffer,
                                event_wait_list);
 
     if (event) {
-      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
-          PI_COMMAND_TYPE_MEM_BUFFER_COPY, command_queue, stream));
-      result = retImplEv->start();
+      if (!command_queue->isInOrderQueue()) {
+        command_queue->cached_event =
+            std::unique_ptr<_pi_event>(_pi_event::make_native(
+                PI_COMMAND_TYPE_MEM_BUFFER_COPY, command_queue, stream));
+      }
+      result = command_queue->cached_event->start();
     }
 
     auto src = src_buffer->mem_.buffer_mem_.get() + src_offset;
@@ -4443,8 +4479,11 @@ pi_result cuda_piEnqueueMemBufferCopy(pi_queue command_queue, pi_mem src_buffer,
     result = PI_CHECK_ERROR(cuMemcpyDtoDAsync(dst, src, size, stream));
 
     if (event) {
-      result = retImplEv->record();
-      *event = retImplEv.release();
+      result = command_queue->cached_event->record();
+      if (!command_queue->isInOrderQueue())
+        *event = command_queue->cached_event.release();
+      else
+        command_queue->cached_event->reset_state();
     }
 
     return result;
@@ -4470,7 +4509,6 @@ pi_result cuda_piEnqueueMemBufferCopyRect(
   pi_result retErr = PI_SUCCESS;
   CUdeviceptr srcPtr = src_buffer->mem_.buffer_mem_.get();
   CUdeviceptr dstPtr = dst_buffer->mem_.buffer_mem_.get();
-  std::unique_ptr<_pi_event> retImplEv{nullptr};
 
   try {
     ScopedContext active(command_queue->get_context());
@@ -4479,9 +4517,12 @@ pi_result cuda_piEnqueueMemBufferCopyRect(
                                event_wait_list);
 
     if (event) {
-      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
-          PI_COMMAND_TYPE_MEM_BUFFER_COPY_RECT, command_queue, cuStream));
-      retImplEv->start();
+      if (!command_queue->isInOrderQueue()) {
+        command_queue->cached_event =
+            std::unique_ptr<_pi_event>(_pi_event::make_native(
+                PI_COMMAND_TYPE_MEM_BUFFER_COPY_RECT, command_queue, cuStream));
+      }
+      command_queue->cached_event->start();
     }
 
     retErr = commonEnqueueMemBufferCopyRect(
@@ -4490,8 +4531,11 @@ pi_result cuda_piEnqueueMemBufferCopyRect(
         dst_origin, dst_row_pitch, dst_slice_pitch);
 
     if (event) {
-      retImplEv->record();
-      *event = retImplEv.release();
+      command_queue->cached_event->record();
+      if (!command_queue->isInOrderQueue())
+        *event = command_queue->cached_event.release();
+      else
+        command_queue->cached_event->reset_state();
     }
 
   } catch (pi_result err) {
@@ -4523,8 +4567,6 @@ pi_result cuda_piEnqueueMemBufferFill(pi_queue command_queue, pi_mem buffer,
   (void)pattern_is_valid;
   (void)pattern_size_is_valid;
 
-  std::unique_ptr<_pi_event> retImplEv{nullptr};
-
   try {
     ScopedContext active(command_queue->get_context());
 
@@ -4534,9 +4576,11 @@ pi_result cuda_piEnqueueMemBufferFill(pi_queue command_queue, pi_mem buffer,
                                event_wait_list);
 
     if (event) {
-      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
-          PI_COMMAND_TYPE_MEM_BUFFER_FILL, command_queue, stream));
-      result = retImplEv->start();
+      if (!command_queue->isInOrderQueue())
+        command_queue->cached_event =
+            std::unique_ptr<_pi_event>(_pi_event::make_native(
+                PI_COMMAND_TYPE_MEM_BUFFER_FILL, command_queue, stream));
+      result = command_queue->cached_event->start();
     }
 
     auto dstDevice = buffer->mem_.buffer_mem_.get() + offset;
@@ -4588,8 +4632,11 @@ pi_result cuda_piEnqueueMemBufferFill(pi_queue command_queue, pi_mem buffer,
     }
 
     if (event) {
-      result = retImplEv->record();
-      *event = retImplEv.release();
+      result = command_queue->cached_event->record();
+      if (!command_queue->isInOrderQueue())
+        *event = command_queue->cached_event.release();
+      else
+        command_queue->cached_event->reset_state();
     }
 
     return result;

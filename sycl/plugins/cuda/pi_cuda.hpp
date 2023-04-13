@@ -429,6 +429,7 @@ struct _pi_queue {
   std::mutex transfer_stream_mutex_;
   std::mutex barrier_mutex_;
   bool has_ownership_;
+  std::unique_ptr<_pi_event> cached_event; // Cached event for in-order queue
 
   _pi_queue(std::vector<CUstream> &&compute_streams,
             std::vector<CUstream> &&transfer_streams, _pi_context *context,
@@ -448,10 +449,9 @@ struct _pi_queue {
     cuda_piDeviceRetain(device_);
   }
 
-  ~_pi_queue() {
-    cuda_piContextRelease(context_);
-    cuda_piDeviceRelease(device_);
-  }
+  bool isInOrderQueue() const;
+
+  ~_pi_queue();
 
   void compute_stream_wait_for_barrier_if_needed(CUstream stream,
                                                  pi_uint32 stream_i);
@@ -461,7 +461,7 @@ struct _pi_queue {
   // get_next_compute/transfer_stream() functions return streams from
   // appropriate pools in round-robin fashion
   native_type get_next_compute_stream(pi_uint32 *stream_token = nullptr);
-  // this overload tries select a stream that was used by one of dependancies.
+  // this overload tries select a stream that was used by one of dependencies.
   // If that is not possible returns a new stream. If a stream is reused it
   // returns a lock that needs to remain locked as long as the stream is in use
   native_type get_next_compute_stream(pi_uint32 num_events_in_wait_list,
@@ -656,6 +656,11 @@ public:
   bool is_started() const noexcept { return isStarted_; }
 
   bool is_completed() const noexcept;
+
+  void reset_state() {
+    isStarted_ = false;
+    isRecorded_ = false;
+  }
 
   pi_int32 get_execution_status() const noexcept {
 
