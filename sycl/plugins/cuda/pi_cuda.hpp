@@ -97,8 +97,8 @@ private:
 public:
   _pi_device(native_type cuDevice, CUcontext cuContext, CUevent evBase,
              pi_platform platform)
-      : cuDevice_(cuDevice), cuContext_(cuContext),
-        evBase_(evBase), refCount_{1}, platform_(platform) {}
+      : cuDevice_(cuDevice), cuContext_(cuContext), evBase_(evBase),
+        refCount_{1}, platform_(platform) {}
 
   ~_pi_device() { cuDevicePrimaryCtxRelease(cuDevice_); }
 
@@ -429,7 +429,7 @@ struct _pi_queue {
   std::mutex transfer_stream_mutex_;
   std::mutex barrier_mutex_;
   bool has_ownership_;
-  std::unique_ptr<_pi_event> cached_event; // Cached event for in-order queue
+  std::unique_ptr<_pi_event> in_order_event; // Cached event for in-order queue
 
   _pi_queue(std::vector<CUstream> &&compute_streams,
             std::vector<CUstream> &&transfer_streams, _pi_context *context,
