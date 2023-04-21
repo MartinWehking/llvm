@@ -37,6 +37,7 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <stack>
 #include <stdint.h>
 #include <string>
 #include <unordered_map>
@@ -97,8 +98,8 @@ private:
 public:
   _pi_device(native_type cuDevice, CUcontext cuContext, CUevent evBase,
              pi_platform platform)
-      : cuDevice_(cuDevice), cuContext_(cuContext), evBase_(evBase),
-        refCount_{1}, platform_(platform) {}
+      : cuDevice_(cuDevice), cuContext_(cuContext),
+        evBase_(evBase), refCount_{1}, platform_(platform) {}
 
   ~_pi_device() { cuDevicePrimaryCtxRelease(cuDevice_); }
 
@@ -407,6 +408,7 @@ struct _pi_queue {
   // keep track of which streams have applied barrier
   std::vector<bool> compute_applied_barrier_;
   std::vector<bool> transfer_applied_barrier_;
+  std::stack<std::unique_ptr<_pi_event>> cached_events;
   _pi_context *context_;
   _pi_device *device_;
   pi_queue_properties properties_;
@@ -429,7 +431,6 @@ struct _pi_queue {
   std::mutex transfer_stream_mutex_;
   std::mutex barrier_mutex_;
   bool has_ownership_;
-  std::unique_ptr<_pi_event> in_order_event; // Cached event for in-order queue
 
   _pi_queue(std::vector<CUstream> &&compute_streams,
             std::vector<CUstream> &&transfer_streams, _pi_context *context,
@@ -623,6 +624,15 @@ struct _pi_queue {
   pi_uint32 get_next_event_id() noexcept { return ++eventCount_; }
 
   bool backend_has_ownership() const noexcept { return has_ownership_; }
+
+  bool has_cached_events() { return !cached_events.empty(); }
+
+  pi_event get_cached_event() {
+    assert(has_cached_events());
+    auto retEv = cached_events.top().release();
+    cached_events.pop();
+    return retEv;
+  }
 };
 
 typedef void (*pfn_notify)(pi_event event, pi_int32 eventCommandStatus,
@@ -700,6 +710,12 @@ public:
   static pi_event
   make_native(pi_command_type type, pi_queue queue, CUstream stream,
               pi_uint32 stream_token = std::numeric_limits<pi_uint32>::max()) {
+    if (queue->has_cached_events()) {
+      auto retQueue = queue->get_cached_event();
+      retQueue->stream_ = stream;
+      retQueue->streamToken_ = stream_token;
+    }
+
     return new _pi_event(type, queue->get_context(), queue, stream,
                          stream_token);
   }
@@ -709,6 +725,8 @@ public:
   }
 
   pi_result release();
+
+  void destroy();
 
   ~_pi_event();
 
@@ -721,6 +739,10 @@ private:
   // This constructor is private to force programmers to use the
   // make_with_native for event introp
   _pi_event(pi_context context, CUevent eventNative);
+
+  // This copy constructor is needed for caching events and avoiding to create
+  // new CuEvents
+  _pi_event(_pi_event &&other);
 
   pi_command_type commandType_; // The type of command associated with event.
 

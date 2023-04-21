@@ -523,9 +523,6 @@ CUstream _pi_queue::get_next_transfer_stream() {
 _pi_queue::~_pi_queue() {
   cuda_piContextRelease(context_);
   cuda_piDeviceRelease(device_);
-
-  if (isInOrderQueue() && in_order_event)
-    in_order_event.release();
 }
 
 _pi_event::_pi_event(pi_command_type type, pi_context context, pi_queue queue,
@@ -551,17 +548,43 @@ _pi_event::_pi_event(pi_command_type type, pi_context context, pi_queue queue,
   cuda_piContextRetain(context_);
 }
 
+_pi_event::_pi_event(_pi_event &&other) {
+  this->context_ = other.context_;
+  this->evStart_ = other.evStart_;
+  this->evQueued_ = other.evQueued_;
+  this->evEnd_ = other.evEnd_;
+  this->has_ownership_ = other.has_ownership_;
+  this->queue_ = other.queue_;
+  this->refCount_ = 1;
+  other.refCount_ = 0;
+
+  this->streamToken_ = other.streamToken_;
+  this->eventId_ = other.eventId_;
+  other.evStart_ = nullptr;
+  other.evQueued_ = nullptr;
+  other.evEnd_ = nullptr;
+}
+
 _pi_event::_pi_event(pi_context context, CUevent eventNative)
     : commandType_{PI_COMMAND_TYPE_USER}, refCount_{1}, has_ownership_{false},
       hasBeenWaitedOn_{false}, isRecorded_{false}, isStarted_{false},
       streamToken_{std::numeric_limits<pi_uint32>::max()}, evEnd_{eventNative},
-      evStart_{nullptr}, evQueued_{nullptr}, queue_{nullptr},
-      context_{context} {
+      evStart_{nullptr}, evQueued_{nullptr}, queue_{nullptr}, context_{
+                                                                  context} {
   cuda_piContextRetain(context_);
 }
 
 _pi_event::~_pi_event() {
   if (queue_ != nullptr) {
+    if (evEnd_) // Event might have been cached before
+      PI_CHECK_ERROR(cuEventDestroy(evEnd_));
+
+    if (queue_->properties_ & PI_QUEUE_FLAG_PROFILING_ENABLE) {
+      if (evQueued_)
+        PI_CHECK_ERROR(cuEventDestroy(evQueued_));
+      if (evStart_)
+        PI_CHECK_ERROR(cuEventDestroy(evStart_));
+    }
     cuda_piQueueRelease(queue_);
   }
   cuda_piContextRelease(context_);
@@ -679,13 +702,8 @@ pi_result _pi_event::release() {
 
   assert(queue_ != nullptr);
 
-  PI_CHECK_ERROR(cuEventDestroy(evEnd_));
-
-  if (queue_->properties_ & PI_QUEUE_FLAG_PROFILING_ENABLE) {
-    PI_CHECK_ERROR(cuEventDestroy(evQueued_));
-    PI_CHECK_ERROR(cuEventDestroy(evStart_));
-  }
-
+  auto copy = std::unique_ptr<_pi_event>(new _pi_event(std::move(*this)));
+  queue_->cached_events.emplace(std::move(copy));
   return PI_SUCCESS;
 }
 
@@ -2748,11 +2766,8 @@ pi_result cuda_piEnqueueMemBufferWrite(pi_queue command_queue, pi_mem buffer,
     std::unique_ptr<_pi_event> retImplEv{nullptr};
 
     if (event) {
-      retImplEv =
-          (command_queue->isInOrderQueue() && command_queue->in_order_event)
-              ? std::move(command_queue->in_order_event)
-              : std::unique_ptr<_pi_event>(_pi_event::make_native(
-                    PI_COMMAND_TYPE_MEM_BUFFER_WRITE, command_queue, cuStream));
+      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
+          PI_COMMAND_TYPE_MEM_BUFFER_WRITE, command_queue, cuStream));
       retImplEv->start();
     }
 
@@ -2767,13 +2782,9 @@ pi_result cuda_piEnqueueMemBufferWrite(pi_queue command_queue, pi_mem buffer,
       retErr = PI_CHECK_ERROR(cuStreamSynchronize(cuStream));
     }
 
-    if (event) {
-      if (!command_queue->isInOrderQueue())
-        *event = retImplEv.release();
-      else
-        retImplEv->reset_state();
-      command_queue->in_order_event = std::move(retImplEv);
-    }
+    if (event)
+      *event = retImplEv.release();
+
   } catch (pi_result err) {
     retErr = err;
   }
@@ -2801,11 +2812,8 @@ pi_result cuda_piEnqueueMemBufferRead(pi_queue command_queue, pi_mem buffer,
                                event_wait_list);
 
     if (event) {
-      retImplEv =
-          (command_queue->isInOrderQueue() && command_queue->in_order_event)
-              ? std::move(command_queue->in_order_event)
-              : std::unique_ptr<_pi_event>(_pi_event::make_native(
-                    PI_COMMAND_TYPE_MEM_BUFFER_READ, command_queue, cuStream));
+      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
+          PI_COMMAND_TYPE_MEM_BUFFER_READ, command_queue, cuStream));
       retImplEv->start();
     }
 
@@ -2820,13 +2828,8 @@ pi_result cuda_piEnqueueMemBufferRead(pi_queue command_queue, pi_mem buffer,
       retErr = PI_CHECK_ERROR(cuStreamSynchronize(cuStream));
     }
 
-    if (event) {
-      if (!command_queue->isInOrderQueue())
-        *event = retImplEv.release();
-      else
-        retImplEv->reset_state();
-      command_queue->in_order_event = std::move(retImplEv);
-    }
+    if (event)
+      *event = retImplEv.release();
 
   } catch (pi_result err) {
     retErr = err;
@@ -3199,12 +3202,9 @@ pi_result cuda_piEnqueueKernelLaunch(
     auto &argIndices = kernel->get_arg_indices();
 
     if (event) {
-      retImplEv =
-          (command_queue->isInOrderQueue() && command_queue->in_order_event)
-              ? std::move(command_queue->in_order_event)
-              : std::unique_ptr<_pi_event>(_pi_event::make_native(
-                    PI_COMMAND_TYPE_NDRANGE_KERNEL, command_queue, cuStream,
-                    stream_token));
+      retImplEv = std::unique_ptr<_pi_event>(
+          _pi_event::make_native(PI_COMMAND_TYPE_NDRANGE_KERNEL, command_queue,
+                                 cuStream, stream_token));
       retImplEv->start();
     }
 
@@ -3239,13 +3239,7 @@ pi_result cuda_piEnqueueKernelLaunch(
 
     if (event) {
       retError = retImplEv->record();
-      if (!command_queue->isInOrderQueue()) // Skip releasing for in order
-                                            // queues and reuse former event
-        *event = retImplEv.release();
-      else {
-        retImplEv->reset_state();
-        command_queue->in_order_event = std::move(retImplEv);
-      }
+      *event = retImplEv.release();
     }
   } catch (pi_result err) {
     retError = err;
@@ -4372,12 +4366,8 @@ pi_result cuda_piEnqueueMemBufferReadRect(
                                event_wait_list);
 
     if (event) {
-      retImplEv =
-          (command_queue->isInOrderQueue() && command_queue->in_order_event)
-              ? std::move(command_queue->in_order_event)
-              : std::unique_ptr<_pi_event>(
-                    _pi_event::make_native(PI_COMMAND_TYPE_MEM_BUFFER_READ_RECT,
-                                           command_queue, cuStream));
+      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
+          PI_COMMAND_TYPE_MEM_BUFFER_READ_RECT, command_queue, cuStream));
       retImplEv->start();
     }
 
@@ -4395,12 +4385,7 @@ pi_result cuda_piEnqueueMemBufferReadRect(
     }
 
     if (event) {
-      if (!command_queue->isInOrderQueue())
-        *event = retImplEv.release();
-      else {
-        retImplEv->reset_state();
-        command_queue->in_order_event = std::move(retImplEv);
-      }
+      *event = retImplEv.release();
     }
   } catch (pi_result err) {
     retErr = err;
@@ -4431,12 +4416,8 @@ pi_result cuda_piEnqueueMemBufferWriteRect(
                                event_wait_list);
 
     if (event) {
-      retImplEv =
-          (command_queue->isInOrderQueue() && command_queue->in_order_event)
-              ? std::move(command_queue->in_order_event)
-              : std::unique_ptr<_pi_event>(_pi_event::make_native(
-                    PI_COMMAND_TYPE_MEM_BUFFER_WRITE_RECT, command_queue,
-                    cuStream));
+      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
+          PI_COMMAND_TYPE_MEM_BUFFER_WRITE_RECT, command_queue, cuStream));
       retImplEv->start();
     }
 
@@ -4454,12 +4435,7 @@ pi_result cuda_piEnqueueMemBufferWriteRect(
     }
 
     if (event) {
-      if (!command_queue->isInOrderQueue())
-        *event = retImplEv.release();
-      else {
-        retImplEv->reset_state();
-        command_queue->in_order_event = std::move(retImplEv);
-      }
+      *event = retImplEv.release();
     }
 
   } catch (pi_result err) {
@@ -4489,11 +4465,8 @@ pi_result cuda_piEnqueueMemBufferCopy(pi_queue command_queue, pi_mem src_buffer,
                                event_wait_list);
 
     if (event) {
-      retImplEv =
-          (command_queue->isInOrderQueue() && command_queue->in_order_event)
-              ? std::move(command_queue->in_order_event)
-              : std::unique_ptr<_pi_event>(_pi_event::make_native(
-                    PI_COMMAND_TYPE_MEM_BUFFER_COPY, command_queue, stream));
+      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
+          PI_COMMAND_TYPE_MEM_BUFFER_COPY, command_queue, stream));
       retImplEv->start();
     }
 
@@ -4504,12 +4477,7 @@ pi_result cuda_piEnqueueMemBufferCopy(pi_queue command_queue, pi_mem src_buffer,
 
     if (event) {
       result = retImplEv->record();
-      if (!command_queue->isInOrderQueue())
-        *event = retImplEv.release();
-      else {
-        retImplEv->reset_state();
-        command_queue->in_order_event = std::move(retImplEv);
-      }
+      *event = retImplEv.release();
     }
 
     return result;
@@ -4545,12 +4513,8 @@ pi_result cuda_piEnqueueMemBufferCopyRect(
                                event_wait_list);
 
     if (event) {
-      retImplEv =
-          (command_queue->isInOrderQueue() && command_queue->in_order_event)
-              ? std::move(command_queue->in_order_event)
-              : std::unique_ptr<_pi_event>(
-                    _pi_event::make_native(PI_COMMAND_TYPE_MEM_BUFFER_COPY_RECT,
-                                           command_queue, cuStream));
+      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
+          PI_COMMAND_TYPE_MEM_BUFFER_COPY_RECT, command_queue, cuStream));
       retImplEv->start();
     }
 
@@ -4561,12 +4525,7 @@ pi_result cuda_piEnqueueMemBufferCopyRect(
 
     if (event) {
       retImplEv->record();
-      if (!command_queue->isInOrderQueue())
-        *event = retImplEv.release();
-      else {
-        retImplEv->reset_state();
-        command_queue->in_order_event = std::move(retImplEv);
-      }
+      *event = retImplEv.release();
     }
 
   } catch (pi_result err) {
@@ -4609,11 +4568,8 @@ pi_result cuda_piEnqueueMemBufferFill(pi_queue command_queue, pi_mem buffer,
                                event_wait_list);
 
     if (event) {
-      retImplEv =
-          (command_queue->isInOrderQueue() && command_queue->in_order_event)
-              ? std::move(command_queue->in_order_event)
-              : std::unique_ptr<_pi_event>(_pi_event::make_native(
-                    PI_COMMAND_TYPE_MEM_BUFFER_FILL, command_queue, stream));
+      retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
+          PI_COMMAND_TYPE_MEM_BUFFER_FILL, command_queue, stream));
       retImplEv->start();
     }
 
@@ -4667,12 +4623,7 @@ pi_result cuda_piEnqueueMemBufferFill(pi_queue command_queue, pi_mem buffer,
 
     if (event) {
       result = retImplEv->record();
-      if (!command_queue->isInOrderQueue())
-        *event = retImplEv.release();
-      else {
-        retImplEv->reset_state();
-        command_queue->in_order_event = std::move(retImplEv);
-      }
+      *event = retImplEv.release();
     }
 
     return result;
