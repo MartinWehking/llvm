@@ -563,6 +563,11 @@ _pi_event::_pi_event(_pi_event &&other) {
   other.evStart_ = nullptr;
   other.evQueued_ = nullptr;
   other.evEnd_ = nullptr;
+
+  if (queue_)
+    cuda_piQueueRetain(queue_);
+  
+  cuda_piContextRetain(context_);
 }
 
 _pi_event::_pi_event(pi_context context, CUevent eventNative)
