@@ -667,11 +667,6 @@ public:
 
   bool is_completed() const noexcept;
 
-  void reset_state() {
-    isStarted_ = false;
-    isRecorded_ = false;
-  }
-
   pi_int32 get_execution_status() const noexcept {
 
     if (!is_recorded()) {
@@ -715,6 +710,11 @@ public:
       retEvent->stream_ = stream;
       retEvent->streamToken_ = stream_token;
       retEvent->commandType_ = type;
+      retEvent->queue_ = queue;
+      retEvent->context_ = queue->context_;
+
+      cuda_piQueueRetain(retEvent->queue_);
+      cuda_piContextRetain(retEvent->context_);
 
       return retEvent;
     }
@@ -728,8 +728,6 @@ public:
   }
 
   pi_result release();
-
-  void destroy();
 
   ~_pi_event();
 

@@ -443,6 +443,11 @@ pi_result cuda_piEventRetain(pi_event event);
 
 /// \endcond
 
+_pi_queue::~_pi_queue() {
+    cuda_piContextRelease(context_);
+    cuda_piDeviceRelease(device_);
+  }
+
 void _pi_queue::compute_stream_wait_for_barrier_if_needed(CUstream stream,
                                                           pi_uint32 stream_i) {
   if (barrier_event_ && !compute_applied_barrier_[stream_i]) {
@@ -540,11 +545,6 @@ CUstream _pi_queue::get_next_transfer_stream() {
   return res;
 }
 
-_pi_queue::~_pi_queue() {
-  cuda_piContextRelease(context_);
-  cuda_piDeviceRelease(device_);
-}
-
 _pi_event::_pi_event(pi_command_type type, pi_context context, pi_queue queue,
                      CUstream stream, pi_uint32 stream_token)
     : commandType_{type}, refCount_{1}, has_ownership_{true},
@@ -574,22 +574,17 @@ _pi_event::_pi_event(_pi_event &&other)
       isRecorded_{false}, isStarted_{false},
       streamToken_{other.streamToken_}, eventId_{other.eventId_},
       evEnd_{other.evEnd_},evStart_{other.evStart_}, 
-      evQueued_{other.evQueued_}, queue_{other.queue_},
-      stream_{other.stream_}, context_{other.context_} {
+      evQueued_{other.evQueued_}, queue_{nullptr},
+      stream_{other.stream_}, context_{nullptr} {
 
   other.refCount_ = 0;
   other.evStart_ = nullptr;
   other.evQueued_ = nullptr;
   other.evEnd_ = nullptr;
   other.stream_ = nullptr;
-
-  if (queue_) {
-    cuda_piQueueRetain(queue_);
+  if (other.queue_)
     cuda_piQueueRelease(other.queue_);
-    other.queue_ = nullptr;
-  }
-
-  cuda_piContextRetain(context_);
+  other.queue_ = nullptr;
   cuda_piContextRelease(other.context_);
   other.context_ = nullptr;
 }
@@ -732,8 +727,9 @@ pi_result _pi_event::release() {
 
   assert(queue_ != nullptr);
 
+  auto temp_queue = queue_;
   auto copy = std::unique_ptr<_pi_event>(new _pi_event(std::move(*this)));
-  copy->queue_->cached_events.emplace(std::move(copy));
+  temp_queue->cached_events.emplace(std::move(copy));
   return PI_SUCCESS;
 }
 
