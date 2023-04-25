@@ -711,9 +711,12 @@ public:
   make_native(pi_command_type type, pi_queue queue, CUstream stream,
               pi_uint32 stream_token = std::numeric_limits<pi_uint32>::max()) {
     if (queue->has_cached_events()) {
-      auto retQueue = queue->get_cached_event();
-      retQueue->stream_ = stream;
-      retQueue->streamToken_ = stream_token;
+      auto retEvent = queue->get_cached_event();
+      retEvent->stream_ = stream;
+      retEvent->streamToken_ = stream_token;
+      retEvent->commandType_ = type;
+
+      return retEvent;
     }
 
     return new _pi_event(type, queue->get_context(), queue, stream,

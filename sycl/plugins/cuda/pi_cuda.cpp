@@ -568,51 +568,56 @@ _pi_event::_pi_event(pi_command_type type, pi_context context, pi_queue queue,
   cuda_piContextRetain(context_);
 }
 
-_pi_event::_pi_event(_pi_event &&other) {
-  this->context_ = other.context_;
-  this->evStart_ = other.evStart_;
-  this->evQueued_ = other.evQueued_;
-  this->evEnd_ = other.evEnd_;
-  this->has_ownership_ = other.has_ownership_;
-  this->queue_ = other.queue_;
-  this->refCount_ = 1;
-  other.refCount_ = 0;
+_pi_event::_pi_event(_pi_event &&other)
+    : commandType_{other.commandType_}, refCount_{1},
+      has_ownership_{other.has_ownership_}, hasBeenWaitedOn_{false},
+      isRecorded_{false}, isStarted_{false},
+      streamToken_{other.streamToken_}, eventId_{other.eventId_},
+      evEnd_{other.evEnd_},evStart_{other.evStart_}, 
+      evQueued_{other.evQueued_}, queue_{other.queue_},
+      stream_{other.stream_}, context_{other.context_} {
 
-  this->streamToken_ = other.streamToken_;
-  this->eventId_ = other.eventId_;
+  other.refCount_ = 0;
   other.evStart_ = nullptr;
   other.evQueued_ = nullptr;
   other.evEnd_ = nullptr;
+  other.stream_ = nullptr;
 
-  if (queue_)
+  if (queue_) {
     cuda_piQueueRetain(queue_);
-  
+    cuda_piQueueRelease(other.queue_);
+    other.queue_ = nullptr;
+  }
+
   cuda_piContextRetain(context_);
+  cuda_piContextRelease(other.context_);
+  other.context_ = nullptr;
 }
 
 _pi_event::_pi_event(pi_context context, CUevent eventNative)
     : commandType_{PI_COMMAND_TYPE_USER}, refCount_{1}, has_ownership_{false},
       hasBeenWaitedOn_{false}, isRecorded_{false}, isStarted_{false},
       streamToken_{std::numeric_limits<pi_uint32>::max()}, evEnd_{eventNative},
-      evStart_{nullptr}, evQueued_{nullptr}, queue_{nullptr},
-      context_{context} {
+      evStart_{nullptr}, evQueued_{nullptr}, queue_{nullptr}, context_{
+                                                                  context} {
   cuda_piContextRetain(context_);
 }
 
 _pi_event::~_pi_event() {
-  if (queue_ != nullptr) {
-    if (evEnd_) // Event might have been cached before
-      PI_CHECK_ERROR(cuEventDestroy(evEnd_));
+  // NOTE: Members might have been moved. Therefore, guards are required.
+  if (evEnd_)
+    PI_CHECK_ERROR(cuEventDestroy(evEnd_));
 
-    if (queue_->properties_ & PI_QUEUE_FLAG_PROFILING_ENABLE) {
-      if (evQueued_)
-        PI_CHECK_ERROR(cuEventDestroy(evQueued_));
-      if (evStart_)
-        PI_CHECK_ERROR(cuEventDestroy(evStart_));
-    }
+  if (evQueued_)
+    PI_CHECK_ERROR(cuEventDestroy(evQueued_));
+
+  if (evStart_)
+    PI_CHECK_ERROR(cuEventDestroy(evStart_));
+
+  if (queue_)
     cuda_piQueueRelease(queue_);
-  }
-  cuda_piContextRelease(context_);
+  if (context_)
+    cuda_piContextRelease(context_);
 }
 
 pi_result _pi_event::start() {
@@ -728,7 +733,7 @@ pi_result _pi_event::release() {
   assert(queue_ != nullptr);
 
   auto copy = std::unique_ptr<_pi_event>(new _pi_event(std::move(*this)));
-  queue_->cached_events.emplace(std::move(copy));
+  copy->queue_->cached_events.emplace(std::move(copy));
   return PI_SUCCESS;
 }
 
