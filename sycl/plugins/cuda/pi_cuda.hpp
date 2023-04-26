@@ -712,6 +712,7 @@ public:
       retEvent->commandType_ = type;
       retEvent->queue_ = queue;
       retEvent->context_ = queue->context_;
+      retEvent->refCount_ = 1;
 
       cuda_piQueueRetain(retEvent->queue_);
       cuda_piContextRetain(retEvent->context_);
@@ -731,6 +732,10 @@ public:
 
   ~_pi_event();
 
+    // This copy constructor is needed for caching events and avoiding to create
+  // new CuEvents
+  _pi_event(_pi_event &&other);
+
 private:
   // This constructor is private to force programmers to use the make_native /
   // make_user static members in order to create a pi_event for CUDA.
@@ -741,9 +746,6 @@ private:
   // make_with_native for event introp
   _pi_event(pi_context context, CUevent eventNative);
 
-  // This copy constructor is needed for caching events and avoiding to create
-  // new CuEvents
-  _pi_event(_pi_event &&other);
 
   pi_command_type commandType_; // The type of command associated with event.
 

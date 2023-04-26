@@ -569,7 +569,7 @@ _pi_event::_pi_event(pi_command_type type, pi_context context, pi_queue queue,
 }
 
 _pi_event::_pi_event(_pi_event &&other)
-    : commandType_{other.commandType_}, refCount_{1},
+    : commandType_{other.commandType_}, refCount_{0},
       has_ownership_{other.has_ownership_}, hasBeenWaitedOn_{false},
       isRecorded_{false}, isStarted_{false},
       streamToken_{other.streamToken_}, eventId_{other.eventId_},
@@ -577,7 +577,6 @@ _pi_event::_pi_event(_pi_event &&other)
       evQueued_{other.evQueued_}, queue_{nullptr},
       stream_{other.stream_}, context_{nullptr} {
 
-  other.refCount_ = 0;
   other.evStart_ = nullptr;
   other.evQueued_ = nullptr;
   other.evEnd_ = nullptr;
@@ -585,7 +584,8 @@ _pi_event::_pi_event(_pi_event &&other)
   if (other.queue_)
     cuda_piQueueRelease(other.queue_);
   other.queue_ = nullptr;
-  cuda_piContextRelease(other.context_);
+  if (other.context_)
+    cuda_piContextRelease(other.context_);
   other.context_ = nullptr;
 }
 
@@ -726,6 +726,7 @@ pi_result _pi_event::release() {
     return PI_SUCCESS;
 
   assert(queue_ != nullptr);
+  assert(refCount_ == 0);
 
   auto temp_queue = queue_;
   auto copy = std::unique_ptr<_pi_event>(new _pi_event(std::move(*this)));
@@ -4044,7 +4045,17 @@ pi_result cuda_piEventRelease(pi_event event) {
     pi_result result = PI_ERROR_INVALID_EVENT;
     try {
       ScopedContext active(event->get_context());
-      result = event->release();
+      if (event->backend_has_ownership())
+        result = PI_SUCCESS;
+      else {
+        assert(event->get_reference_count() == 0);
+        assert(event->get_queue() != nullptr);
+
+        auto temp_queue = event->get_queue();
+        auto copy = std::unique_ptr<_pi_event>(new _pi_event(std::move(*event)));
+        temp_queue->cached_events.emplace(std::move(copy));
+        result = PI_SUCCESS;
+      }
     } catch (...) {
       result = PI_ERROR_OUT_OF_RESOURCES;
     }
