@@ -720,20 +720,6 @@ pi_result _pi_event::wait() {
 
   return retErr;
 }
-
-pi_result _pi_event::release() {
-  if (!backend_has_ownership())
-    return PI_SUCCESS;
-
-  assert(queue_ != nullptr);
-  assert(refCount_ == 0);
-
-  auto temp_queue = queue_;
-  auto copy = std::unique_ptr<_pi_event>(new _pi_event(std::move(*this)));
-  temp_queue->cached_events.emplace(std::move(copy));
-  return PI_SUCCESS;
-}
-
 // makes all future work submitted to queue wait for all work captured in event.
 pi_result enqueueEventWait(pi_queue queue, pi_event event) {
   // for native events, the cuStreamWaitEvent call is used.
@@ -4045,7 +4031,7 @@ pi_result cuda_piEventRelease(pi_event event) {
     pi_result result = PI_ERROR_INVALID_EVENT;
     try {
       ScopedContext active(event->get_context());
-      if (event->backend_has_ownership())
+      if (!event->backend_has_ownership())
         result = PI_SUCCESS;
       else {
         assert(event->get_reference_count() == 0);

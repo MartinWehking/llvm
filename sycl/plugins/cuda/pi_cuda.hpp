@@ -728,8 +728,6 @@ public:
     return new _pi_event(context, eventNative);
   }
 
-  pi_result release();
-
   ~_pi_event();
 
     // This copy constructor is needed for caching events and avoiding to create
