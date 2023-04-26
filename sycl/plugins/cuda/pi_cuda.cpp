@@ -581,11 +581,7 @@ _pi_event::_pi_event(_pi_event &&other)
   other.evQueued_ = nullptr;
   other.evEnd_ = nullptr;
   other.stream_ = nullptr;
-  if (other.queue_)
-    cuda_piQueueRelease(other.queue_);
   other.queue_ = nullptr;
-  if (other.context_)
-    cuda_piContextRelease(other.context_);
   other.context_ = nullptr;
 }
 
@@ -4037,8 +4033,11 @@ pi_result cuda_piEventRelease(pi_event event) {
         assert(event->get_queue() != nullptr);
 
         auto temp_queue = event->get_queue();
+        auto temp_context = event->get_context();
         auto copy = std::make_unique<_pi_event>(std::move(*event_ptr));
         temp_queue->cached_events.emplace(std::move(copy));
+        cuda_piQueueRelease(temp_queue);
+        cuda_piContextRelease(temp_context);
         result = PI_SUCCESS;
       }
     } catch (...) {
