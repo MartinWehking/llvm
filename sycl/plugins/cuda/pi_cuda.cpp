@@ -4037,6 +4037,7 @@ pi_result cuda_piEventRelease(pi_event event) {
         assert(event->get_queue() != nullptr);
 
         auto temp_queue = event->get_queue();
+        auto copy = std::make_unique<_pi_event>(std::move(*event_ptr));
         temp_queue->cached_events.emplace(std::move(event_ptr));
         result = PI_SUCCESS;
       }
