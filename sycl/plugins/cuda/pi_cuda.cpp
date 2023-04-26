@@ -4034,12 +4034,10 @@ pi_result cuda_piEventRelease(pi_event event) {
       if (!event->backend_has_ownership())
         result = PI_SUCCESS;
       else {
-        assert(event->get_reference_count() == 0);
         assert(event->get_queue() != nullptr);
 
         auto temp_queue = event->get_queue();
-        auto copy = std::unique_ptr<_pi_event>(new _pi_event(std::move(*event)));
-        temp_queue->cached_events.emplace(std::move(copy));
+        temp_queue->cached_events.emplace(std::move(event_ptr));
         result = PI_SUCCESS;
       }
     } catch (...) {
