@@ -650,7 +650,6 @@ public:
 
   pi_result start();
 
-  void reset();
 
   native_type get() const noexcept { return evEnd_; };
 
@@ -704,6 +703,8 @@ public:
   //
   pi_uint64 get_end_time() const;
 
+  void reset();
+
   // construct a native CUDA. This maps closely to the underlying CUDA event.
   static pi_event
   make_native(pi_command_type type, pi_queue queue, CUstream stream,
@@ -732,10 +733,6 @@ public:
   }
 
   ~_pi_event();
-
-  // This move constructor is needed for caching events and avoiding creating
-  // new CuEvents
-  _pi_event(_pi_event &&other);
 
 private:
   // This constructor is private to force programmers to use the make_native /

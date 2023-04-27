@@ -563,23 +563,6 @@ _pi_event::_pi_event(pi_command_type type, pi_context context, pi_queue queue,
   cuda_piContextRetain(context_);
 }
 
-_pi_event::_pi_event(_pi_event &&other)
-    : commandType_{other.commandType_}, refCount_{0},
-      has_ownership_{other.has_ownership_}, hasBeenWaitedOn_{false},
-      isRecorded_{false}, isStarted_{false},
-      streamToken_{other.streamToken_}, eventId_{other.eventId_},
-      evEnd_{other.evEnd_},evStart_{other.evStart_}, 
-      evQueued_{other.evQueued_}, queue_{nullptr},
-      stream_{other.stream_}, context_{nullptr} {
-
-  other.evStart_ = nullptr;
-  other.evQueued_ = nullptr;
-  other.evEnd_ = nullptr;
-  other.stream_ = nullptr;
-  other.queue_ = nullptr;
-  other.context_ = nullptr;
-}
-
 void _pi_event::reset() {
   refCount_ = 0;
   hasBeenWaitedOn_ = false;
@@ -4029,11 +4012,9 @@ pi_result cuda_piEventRelease(pi_event event) {
         assert(event->get_queue() != nullptr);
         assert(event->get_context() != nullptr);
 
-        //auto temp_queue = event->get_queue();
-        //auto temp_context = event->get_context();
-        //auto copy = std::make_unique<_pi_event>(std::move(*event_ptr));
         auto queue = event_ptr->get_queue();
         auto context = event_ptr->get_context();
+        
         event_ptr->reset();
         queue->cached_events.emplace(std::move(event_ptr));
         cuda_piQueueRelease(queue);
