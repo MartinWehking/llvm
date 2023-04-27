@@ -650,6 +650,8 @@ public:
 
   pi_result start();
 
+  void reset();
+
   native_type get() const noexcept { return evEnd_; };
 
   pi_queue get_queue() const noexcept { return queue_; }
