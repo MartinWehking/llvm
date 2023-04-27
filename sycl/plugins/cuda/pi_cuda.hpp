@@ -450,9 +450,10 @@ struct _pi_queue {
     cuda_piDeviceRetain(device_);
   }
 
-  bool isInOrderQueue() const;
-
-  ~_pi_queue();
+  _pi_queue::~_pi_queue() {
+    cuda_piContextRelease(context_);
+    cuda_piDeviceRelease(device_);
+  }
 
   void compute_stream_wait_for_barrier_if_needed(CUstream stream,
                                                  pi_uint32 stream_i);
@@ -730,7 +731,7 @@ public:
 
   ~_pi_event();
 
-    // This copy constructor is needed for caching events and avoiding to create
+  // This move constructor is needed for caching events and avoiding creating
   // new CuEvents
   _pi_event(_pi_event &&other);
 
@@ -743,7 +744,6 @@ private:
   // This constructor is private to force programmers to use the
   // make_with_native for event introp
   _pi_event(pi_context context, CUevent eventNative);
-
 
   pi_command_type commandType_; // The type of command associated with event.
 
