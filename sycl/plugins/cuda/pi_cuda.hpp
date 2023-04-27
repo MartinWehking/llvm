@@ -450,7 +450,7 @@ struct _pi_queue {
     cuda_piDeviceRetain(device_);
   }
 
-  _pi_queue::~_pi_queue() {
+  ~_pi_queue() {
     cuda_piContextRelease(context_);
     cuda_piDeviceRelease(device_);
   }

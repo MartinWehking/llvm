@@ -2791,7 +2791,6 @@ pi_result cuda_piEnqueueMemBufferWrite(pi_queue command_queue, pi_mem buffer,
     retErr = enqueueEventsWait(command_queue, cuStream, num_events_in_wait_list,
                                event_wait_list);
 
-
     if (event) {
       retImplEv = std::unique_ptr<_pi_event>(_pi_event::make_native(
           PI_COMMAND_TYPE_MEM_BUFFER_WRITE, command_queue, cuStream));
@@ -3146,7 +3145,6 @@ pi_result cuda_piEnqueueKernelLaunch(
   bool providedLocalWorkGroupSize = (local_work_size != nullptr);
   pi_uint32 local_size = kernel->get_local_size();
   pi_result retError = PI_SUCCESS;
-
 
   try {
     // Set the active context here as guessLocalWorkSize needs an active context
