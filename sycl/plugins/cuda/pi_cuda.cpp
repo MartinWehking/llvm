@@ -2851,6 +2851,7 @@ pi_result cuda_piEnqueueMemBufferRead(pi_queue command_queue, pi_mem buffer,
     if (event) {
       *event = retImplEv.release();
     }
+
   } catch (pi_result err) {
     retErr = err;
   }
@@ -3191,6 +3192,7 @@ pi_result cuda_piEnqueueKernelLaunch(
       blocksPerGrid[i] =
           (global_work_size[i] + threadsPerBlock[i] - 1) / threadsPerBlock[i];
     }
+
     std::unique_ptr<_pi_event> retImplEv{nullptr};
 
     pi_uint32 stream_token;
