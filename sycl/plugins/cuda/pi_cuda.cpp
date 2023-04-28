@@ -566,7 +566,6 @@ _pi_event::_pi_event(pi_command_type type, pi_context context, pi_queue queue,
 void _pi_event::reset() {
   refCount_ = 0;
   hasBeenWaitedOn_ = false;
-  has_ownership_ = false;
   isRecorded_ = false;
   isStarted_ = false;
   queue_ = nullptr;
@@ -4422,6 +4421,7 @@ pi_result cuda_piEnqueueMemBufferReadRect(
     if (event) {
       *event = retImplEv.release();
     }
+
   } catch (pi_result err) {
     retErr = err;
   }

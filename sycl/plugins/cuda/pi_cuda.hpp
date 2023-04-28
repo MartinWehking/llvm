@@ -716,7 +716,6 @@ public:
       retEvent->queue_ = queue;
       retEvent->context_ = queue->context_;
       retEvent->refCount_ = 1;
-      retEvent->has_ownership_ = true;
 
       cuda_piQueueRetain(retEvent->queue_);
       cuda_piContextRetain(retEvent->context_);
