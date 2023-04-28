@@ -408,7 +408,7 @@ struct _pi_queue {
   // keep track of which streams have applied barrier
   std::vector<bool> compute_applied_barrier_;
   std::vector<bool> transfer_applied_barrier_;
-  std::stack<std::unique_ptr<_pi_event>> cached_events;
+  std::stack<std::unique_ptr<_pi_event>> cached_events_;
   _pi_context *context_;
   _pi_device *device_;
   pi_queue_properties properties_;
@@ -626,12 +626,12 @@ struct _pi_queue {
 
   bool backend_has_ownership() const noexcept { return has_ownership_; }
 
-  bool has_cached_events() { return !cached_events.empty(); }
+  bool has_cached_events() const { return !cached_events_.empty(); }
 
   pi_event get_cached_event() {
     assert(has_cached_events());
-    auto retEv = cached_events.top().release();
-    cached_events.pop();
+    auto retEv = cached_events_.top().release();
+    cached_events_.pop();
     return retEv;
   }
 };
@@ -717,6 +717,7 @@ public:
       retEvent->queue_ = queue;
       retEvent->context_ = queue->context_;
       retEvent->refCount_ = 1;
+      retEvent->has_ownership_ = true;
 
       cuda_piQueueRetain(retEvent->queue_);
       cuda_piContextRetain(retEvent->context_);

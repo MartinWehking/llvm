@@ -566,6 +566,7 @@ _pi_event::_pi_event(pi_command_type type, pi_context context, pi_queue queue,
 void _pi_event::reset() {
   refCount_ = 0;
   hasBeenWaitedOn_ = false;
+  has_ownership_ = false;
   isRecorded_ = false;
   isStarted_ = false;
   queue_ = nullptr;
@@ -583,15 +584,16 @@ _pi_event::_pi_event(pi_context context, CUevent eventNative)
 
 _pi_event::~_pi_event() {
   // NOTE: Members might have been moved -> guards are required.
-  if (evEnd_)
-    PI_CHECK_ERROR(cuEventDestroy(evEnd_));
+  if (has_ownership_) {
+      if (evEnd_)
+        PI_CHECK_ERROR(cuEventDestroy(evEnd_));
 
-  if (evQueued_)
-    PI_CHECK_ERROR(cuEventDestroy(evQueued_));
+      if (evQueued_)
+        PI_CHECK_ERROR(cuEventDestroy(evQueued_));
 
-  if (evStart_)
-    PI_CHECK_ERROR(cuEventDestroy(evStart_));
-
+      if (evStart_)
+        PI_CHECK_ERROR(cuEventDestroy(evStart_));
+  }
   if (queue_)
     cuda_piQueueRelease(queue_);
   if (context_)
@@ -4006,8 +4008,9 @@ pi_result cuda_piEventRelease(pi_event event) {
     pi_result result = PI_ERROR_INVALID_EVENT;
     try {
       ScopedContext active(event->get_context());
-      if (!event->backend_has_ownership())
+      if (!event->backend_has_ownership()) {
         result = PI_SUCCESS;
+      }
       else {
         assert(event->get_queue() != nullptr);
         assert(event->get_context() != nullptr);
@@ -4016,7 +4019,7 @@ pi_result cuda_piEventRelease(pi_event event) {
         auto context = event_ptr->get_context();
         
         event_ptr->reset();
-        queue->cached_events.emplace(std::move(event_ptr));
+        queue->cached_events_.emplace(std::move(event_ptr));
         cuda_piQueueRelease(queue);
         cuda_piContextRelease(context);
         result = PI_SUCCESS;
