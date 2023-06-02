@@ -561,7 +561,7 @@ NVPTXTargetLowering::NVPTXTargetLowering(const NVPTXTargetMachine &TM,
 
   // We have some custom DAG combine patterns for these nodes
   setTargetDAGCombine({ISD::ADD, ISD::AND, ISD::FADD, ISD::MUL, ISD::SHL,
-                       ISD::SREM, ISD::UREM});
+                       ISD::SREM, ISD::UREM, ISD::INTRINSIC_WO_CHAIN});
 
   // setcc for f16x2 needs special handling to prevent legalizer's
   // attempt to scalarize it due to v2i1 not being legal.
@@ -5076,13 +5076,68 @@ static SDValue PerformSETCCCombine(SDNode *N,
                          CCNode.getValue(1));
 }
 
+static unsigned getIntrinsicID(const SDNode *N) {
+  unsigned Opcode = N->getOpcode();
+  switch (Opcode) {
+  default:
+    return Intrinsic::not_intrinsic;
+  case ISD::INTRINSIC_WO_CHAIN: {
+    unsigned IID = cast<ConstantSDNode>(N->getOperand(0))->getZExtValue();
+    if (IID < Intrinsic::num_intrinsics)
+      return IID;
+    return Intrinsic::not_intrinsic;
+  }
+  }
+}
+
+static SDValue expandMul24(SDNode *N,
+                                 TargetLowering::DAGCombinerInfo &DCI) {
+
+  // ToDo Perform this not only for 32 bit integers!
+
+  SDValue first = N->getOperand(1);
+  SDValue second = N ->getOperand(2);
+
+  SDLoc DL(first);
+
+  SDValue l = DCI.DAG.getConstant(8, DL, MVT::i32);
+
+  SDValue sh_l1 = DCI.DAG.getNode(ISD::SHL, DL, MVT::i32, first, l);
+
+  SDValue sh_r1 = DCI.DAG.getNode(ISD::SRA, DL, MVT::i32, sh_l1, l);
+
+  SDValue sh_l2 = DCI.DAG.getNode(ISD::SHL, DL, MVT::i32, second, l);
+
+  SDValue sh_r2 = DCI.DAG.getNode(ISD::SRA, DL, MVT::i32, sh_l2, l);
+
+
+  return DCI.DAG.getNode(ISD::MUL, DL, MVT::i32, sh_r1, sh_r2);
+}
+
+
+
+static SDValue PerformIntrinsicWOCombine(SDNode *N,
+                                 TargetLowering::DAGCombinerInfo &DCI) {
+  unsigned IID = getIntrinsicID(N);
+  switch (IID) {
+    case Intrinsic::NVVMIntrinsics::nvvm_mul24_i:
+      return expandMul24(N, DCI);
+    default:
+      break;
+  }
+  return SDValue();
+}
+
 SDValue NVPTXTargetLowering::PerformDAGCombine(SDNode *N,
                                                DAGCombinerInfo &DCI) const {
   CodeGenOpt::Level OptLevel = getTargetMachine().getOptLevel();
   switch (N->getOpcode()) {
     default: break;
+    case ISD::INTRINSIC_WO_CHAIN:
+      return PerformIntrinsicWOCombine(N, DCI);
     case ISD::ADD:
     case ISD::FADD:
+      //DCI.DAG.viewGraph();
       return PerformADDCombine(N, DCI, STI, OptLevel);
     case ISD::MUL:
       return PerformMULCombine(N, DCI, OptLevel);
