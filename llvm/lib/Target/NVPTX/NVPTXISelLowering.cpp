@@ -5104,7 +5104,7 @@ static SDValue expandMul24(SDNode *N,
   SDValue sh_l2 = DCI.DAG.getNode(ISD::SHL, DL, MVT::i32, second, l);
   SDValue sh_r2 = DCI.DAG.getNode(ISD::SRA, DL, MVT::i32, sh_l2, l);
 
-  return DCI.DAG.getNode(ISD::MUL, DL, MVT::i32, sh_r1, sh_r2);
+  return DCI.DAG.getNode(ISD::MUL, DL, N->getValueType(0), sh_r1, sh_r2);
 }
 
 
