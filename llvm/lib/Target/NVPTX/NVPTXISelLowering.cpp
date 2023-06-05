@@ -5092,9 +5092,14 @@ static unsigned getIntrinsicID(const SDNode *N) {
 
 static SDValue expandMul24(SDNode *N,
                                  TargetLowering::DAGCombinerInfo &DCI) {
-
   SDValue first = N->getOperand(1);
+  if (first.getValueType().getFixedSizeInBits() < 32) {
+    first = DCI.DAG.getNode(ISD::ZERO_EXTEND, SDLoc(first), MVT::i32, first);
+  }
   SDValue second = N ->getOperand(2);
+  if (first.getValueType().getFixedSizeInBits() < 32) {
+    second = DCI.DAG.getNode(ISD::ZERO_EXTEND, SDLoc(second), MVT::i32, second);
+  }
 
   SDLoc DL(N);
 
