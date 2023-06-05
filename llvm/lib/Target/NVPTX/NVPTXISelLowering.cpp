@@ -5093,23 +5093,16 @@ static unsigned getIntrinsicID(const SDNode *N) {
 static SDValue expandMul24(SDNode *N,
                                  TargetLowering::DAGCombinerInfo &DCI) {
 
-  // ToDo Perform this not only for 32 bit integers!
-
   SDValue first = N->getOperand(1);
   SDValue second = N ->getOperand(2);
 
   SDLoc DL(first);
 
   SDValue l = DCI.DAG.getConstant(8, DL, MVT::i32);
-
   SDValue sh_l1 = DCI.DAG.getNode(ISD::SHL, DL, MVT::i32, first, l);
-
   SDValue sh_r1 = DCI.DAG.getNode(ISD::SRA, DL, MVT::i32, sh_l1, l);
-
   SDValue sh_l2 = DCI.DAG.getNode(ISD::SHL, DL, MVT::i32, second, l);
-
   SDValue sh_r2 = DCI.DAG.getNode(ISD::SRA, DL, MVT::i32, sh_l2, l);
-
 
   return DCI.DAG.getNode(ISD::MUL, DL, MVT::i32, sh_r1, sh_r2);
 }
