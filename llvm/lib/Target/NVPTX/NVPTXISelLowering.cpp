@@ -5093,13 +5093,7 @@ static unsigned getIntrinsicID(const SDNode *N) {
 static SDValue expandMul24(SDNode *N,
                                  TargetLowering::DAGCombinerInfo &DCI) {
   SDValue first = N->getOperand(1);
-  if (first.getValueType().getFixedSizeInBits() < 32) {
-    first = DCI.DAG.getNode(ISD::ZERO_EXTEND, SDLoc(first), MVT::i32, first);
-  }
   SDValue second = N ->getOperand(2);
-  if (first.getValueType().getFixedSizeInBits() < 32) {
-    second = DCI.DAG.getNode(ISD::ZERO_EXTEND, SDLoc(second), MVT::i32, second);
-  }
 
   SDLoc DL(N);
 
@@ -5118,6 +5112,8 @@ static SDValue PerformIntrinsicWOCombine(SDNode *N,
   switch (IID) {
     case Intrinsic::NVVMIntrinsics::nvvm_mul24_i:
       return expandMul24(N, DCI);
+    case Intrinsic::NVVMIntrinsics::nvvm_mul24_ui:
+      return expandMul24(N, DCI);
     default:
       break;
   }
@@ -5133,7 +5129,6 @@ SDValue NVPTXTargetLowering::PerformDAGCombine(SDNode *N,
       return PerformIntrinsicWOCombine(N, DCI);
     case ISD::ADD:
     case ISD::FADD:
-      //DCI.DAG.viewGraph();
       return PerformADDCombine(N, DCI, STI, OptLevel);
     case ISD::MUL:
       return PerformMULCombine(N, DCI, OptLevel);
