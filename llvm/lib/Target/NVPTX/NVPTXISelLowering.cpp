@@ -5095,15 +5095,21 @@ static SDValue expandMul24(SDNode *N,
   SDValue first = N->getOperand(1);
   SDValue second = N ->getOperand(2);
 
-  SDLoc DL(N);
+  SDLoc DL(N); 
 
-  SDValue l = DCI.DAG.getConstant(8, DL, MVT::i32);
-  SDValue sh_l1 = DCI.DAG.getNode(ISD::SHL, SDLoc(first), MVT::i32, first, l);
-  SDValue sh_r1 = DCI.DAG.getNode(ISD::SRA, SDLoc(sh_l1), MVT::i32, sh_l1, l);
-  SDValue sh_l2 = DCI.DAG.getNode(ISD::SHL, SDLoc(second), MVT::i32, second, l);
-  SDValue sh_r2 = DCI.DAG.getNode(ISD::SRA, SDLoc(sh_l2), MVT::i32, sh_l2, l);
+  if (first.getOpcode() != ISD::ZERO_EXTEND || first.getOperand(0).getValueSizeInBits() >= 24) {
+    SDValue l = DCI.DAG.getConstant(8, DL, MVT::i32);
+    first = DCI.DAG.getNode(ISD::SHL, SDLoc(first), MVT::i32, first, l);
+    first = DCI.DAG.getNode(ISD::SRA, SDLoc(first), MVT::i32, first, l);
+  }
 
-  return DCI.DAG.getNode(ISD::MUL, DL, N->getValueType(0), sh_r1, sh_r2);
+  if (second.getOpcode() != ISD::ZERO_EXTEND || second.getOperand(0).getValueSizeInBits() >= 24) {
+    SDValue l = DCI.DAG.getConstant(8, DL, MVT::i32);
+    second = DCI.DAG.getNode(ISD::SHL, SDLoc(second), MVT::i32, second, l);
+    second = DCI.DAG.getNode(ISD::SRA, SDLoc(second), MVT::i32, second, l);
+  }
+
+  return DCI.DAG.getNode(ISD::MUL, DL, N->getValueType(0), first, second);
 }
 
 static SDValue PerformIntrinsicWOCombine(SDNode *N,
