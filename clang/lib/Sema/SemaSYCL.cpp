@@ -760,7 +760,7 @@ class SingleDeviceFunctionTracker {
     // If this is a routine that is not defined and it does not have either
     // a SYCLKernel or SYCLDevice attribute on it, add it to the set of
     // routines potentially reachable on device. This is to diagnose such
-    // cases later in finalizeSYCLDeviceAnalysis().
+    // cases later in finalizeSYCLDelayedAnalysis().
     if (!CurrentDecl->isDefined() && !CurrentDecl->hasAttr<SYCLKernelAttr>() &&
         !CurrentDecl->hasAttr<SYCLDeviceAttr>())
       Parent.SemaRef.addFDToReachableFromSyclDevice(CurrentDecl,
@@ -1257,8 +1257,6 @@ class KernelObjVisitor {
                   QualType FieldTy, HandlerTys &... Handlers) {
     if (isSyclSpecialType(FieldTy, SemaRef))
       KF_FOR_EACH(handleSyclSpecialType, Field, FieldTy);
-    else if (isSyclType(FieldTy, SYCLTypeAttr::spec_constant))
-      KF_FOR_EACH(handleSyclSpecConstantType, Field, FieldTy);
     else if (FieldTy->isStructureOrClassType()) {
       if (KF_FOR_EACH(handleStructType, Field, FieldTy)) {
         CXXRecordDecl *RD = FieldTy->getAsCXXRecordDecl();
@@ -1326,10 +1324,6 @@ public:
     return true;
   }
   virtual bool handleSyclSpecialType(FieldDecl *, QualType) { return true; }
-
-  virtual bool handleSyclSpecConstantType(FieldDecl *, QualType) {
-    return true;
-  }
 
   virtual bool handleStructType(FieldDecl *, QualType) { return true; }
   virtual bool handleUnionType(FieldDecl *, QualType) { return true; }
@@ -1822,11 +1816,6 @@ public:
     return true;
   }
   bool handleSyclSpecialType(FieldDecl *, QualType) final {
-    CollectionStack.back() = true;
-    return true;
-  }
-
-  bool handleSyclSpecConstantType(FieldDecl *, QualType) final {
     CollectionStack.back() = true;
     return true;
   }
@@ -3448,10 +3437,6 @@ public:
     return handleSpecialType(BS, Ty);
   }
 
-  bool handleSyclSpecConstantType(FieldDecl *FD, QualType Ty) final {
-    return handleSpecialType(FD, Ty);
-  }
-
   bool handlePointerType(FieldDecl *FD, QualType FieldTy) final {
     Expr *PointerRef =
         createPointerParamReferenceExpr(FieldTy, StructDepth != 0);
@@ -3714,21 +3699,6 @@ public:
       llvm_unreachable(
           "Unexpected SYCL special class when generating integration header");
     }
-    return true;
-  }
-
-  bool handleSyclSpecConstantType(FieldDecl *FD, QualType FieldTy) final {
-    const TemplateArgumentList &TemplateArgs =
-        cast<ClassTemplateSpecializationDecl>(FieldTy->getAsRecordDecl())
-            ->getTemplateInstantiationArgs();
-    assert(TemplateArgs.size() == 2 &&
-           "Incorrect template args for spec constant type");
-    // Get specialization constant ID type, which is the second template
-    // argument.
-    QualType SpecConstIDTy = TemplateArgs.get(1).getAsType().getCanonicalType();
-    const std::string SpecConstName = SYCLUniqueStableNameExpr::ComputeName(
-        SemaRef.getASTContext(), SpecConstIDTy);
-    Header.addSpecConstant(SpecConstName, SpecConstIDTy);
     return true;
   }
 
@@ -4573,36 +4543,6 @@ Sema::SYCLDiagIfDeviceCode(SourceLocation Loc, unsigned DiagID,
   return SemaDiagnosticBuilder(DiagKind, Loc, DiagID, FD, *this, Reason);
 }
 
-bool Sema::checkSYCLDeviceFunction(SourceLocation Loc, FunctionDecl *Callee) {
-  assert(getLangOpts().SYCLIsDevice &&
-         "Should only be called during SYCL compilation");
-  assert(Callee && "Callee may not be null.");
-
-  // Errors in an unevaluated context don't need to be generated,
-  // so we can safely skip them.
-  if (isUnevaluatedContext() || isConstantEvaluated())
-    return true;
-
-  FunctionDecl *Caller = dyn_cast<FunctionDecl>(getCurLexicalContext());
-
-  if (!Caller)
-    return true;
-
-  SemaDiagnosticBuilder::Kind DiagKind = SemaDiagnosticBuilder::K_Nop;
-
-  // TODO Set DiagKind to K_Immediate/K_Deferred to emit diagnostics for Callee
-  SemaDiagnosticBuilder(DiagKind, Loc, diag::err_sycl_restrict, Caller, *this,
-                        DeviceDiagnosticReason::Sycl)
-      << Sema::KernelCallUndefinedFunction;
-  SemaDiagnosticBuilder(DiagKind, Callee->getLocation(),
-                        diag::note_previous_decl, Caller, *this,
-                        DeviceDiagnosticReason::Sycl)
-      << Callee;
-
-  return DiagKind != SemaDiagnosticBuilder::K_Immediate &&
-         DiagKind != SemaDiagnosticBuilder::K_ImmediateWithCallStack;
-}
-
 void Sema::deepTypeCheckForSYCLDevice(SourceLocation UsedAt,
                                       llvm::DenseSet<QualType> Visited,
                                       ValueDecl *DeclToCheck) {
@@ -4883,7 +4823,8 @@ class SYCLFwdDeclEmitter
   }
 
 public:
-  SYCLFwdDeclEmitter(raw_ostream &OS, LangOptions LO) : OS(OS), Policy(LO) {
+  SYCLFwdDeclEmitter(raw_ostream &OS, const LangOptions &LO)
+      : OS(OS), Policy(LO) {
     Policy.adjustForCPlusPlusFwdDecl();
     Policy.SuppressTypedefs = true;
     Policy.SuppressUnwrittenScope = true;

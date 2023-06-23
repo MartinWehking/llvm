@@ -947,7 +947,8 @@ public:
                   "The new SYCL vec type must have the same storage size in "
                   "bytes as this SYCL vec");
     static_assert(
-        detail::is_contained<asT, detail::gtl::vector_basic_list>::value,
+        detail::is_contained<asT, detail::gtl::vector_basic_list>::value ||
+            detail::is_contained<asT, detail::gtl::vector_bool_list>::value,
         "asT must be SYCL vec of a different element type and "
         "number of elements specified by asT");
     asT Result;
@@ -1228,7 +1229,11 @@ public:
 // Use __SYCL_DEVICE_ONLY__ macro because cast to OpenCL vector type is defined
 // by SYCL device compiler only.
 #ifdef __SYCL_DEVICE_ONLY__
-    return vec{(typename vec::DataType) ~m_Data};
+    vec Ret{(typename vec::DataType) ~m_Data};
+    if constexpr (std::is_same<Type, bool>::value) {
+      Ret.ConvertToDataT();
+    }
+    return Ret;
 #else
     vec Ret;
     for (size_t I = 0; I < NumElements; ++I) {
@@ -1618,6 +1623,16 @@ public:
     return *this;
   }
 
+  template <int IdxNum = getNumElements(),
+            EnableIfMultipleIndexes<IdxNum, bool> = true>
+  SwizzleOp &operator=(const DataT &Rhs) {
+    std::array<int, IdxNum> Idxs{Indexes...};
+    for (auto Idx : Idxs) {
+      m_Vector->setValue(Idx, Rhs);
+    }
+    return *this;
+  }
+
   template <int IdxNum = getNumElements(), typename = EnableIfOneIndex<IdxNum>>
   SwizzleOp &operator=(DataT &&Rhs) {
     std::array<int, IdxNum> Idxs{Indexes...};
@@ -1679,6 +1694,21 @@ public:
   NewLHOp<RhsOperation, std::divides, Indexes...>
   operator/(const RhsOperation &Rhs) const {
     return NewLHOp<RhsOperation, std::divides, Indexes...>(m_Vector, *this,
+                                                           Rhs);
+  }
+
+  template <typename T, typename = EnableIfScalarType<T>>
+  NewLHOp<GetScalarOp<T>, std::modulus, Indexes...>
+  operator%(const T &Rhs) const {
+    return NewLHOp<GetScalarOp<T>, std::modulus, Indexes...>(
+        m_Vector, *this, GetScalarOp<T>(Rhs));
+  }
+
+  template <typename RhsOperation,
+            typename = EnableIfNoScalarType<RhsOperation>>
+  NewLHOp<RhsOperation, std::modulus, Indexes...>
+  operator%(const RhsOperation &Rhs) const {
+    return NewLHOp<RhsOperation, std::modulus, Indexes...>(m_Vector, *this,
                                                            Rhs);
   }
 
@@ -1930,7 +1960,8 @@ public:
                   "The new SYCL vec type must have the same storage size in "
                   "bytes as this SYCL swizzled vec");
     static_assert(
-        detail::is_contained<asT, detail::gtl::vector_basic_list>::value,
+        detail::is_contained<asT, detail::gtl::vector_basic_list>::value ||
+            detail::is_contained<asT, detail::gtl::vector_bool_list>::value,
         "asT must be SYCL vec of a different element type and "
         "number of elements specified by asT");
     return Tmp.template as<asT>();
@@ -2054,6 +2085,7 @@ __SYCL_BINOP(+)
 __SYCL_BINOP(-)
 __SYCL_BINOP(*)
 __SYCL_BINOP(/)
+__SYCL_BINOP(%)
 __SYCL_BINOP(&)
 __SYCL_BINOP(|)
 __SYCL_BINOP(^)

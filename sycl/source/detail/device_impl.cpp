@@ -23,20 +23,22 @@ device_impl::device_impl()
       MIsAssertFailSupported(true) {}
 
 device_impl::device_impl(pi_native_handle InteropDeviceHandle,
-                         const plugin &Plugin)
+                         const PluginPtr &Plugin)
     : device_impl(InteropDeviceHandle, nullptr, nullptr, Plugin) {}
 
-device_impl::device_impl(RT::PiDevice Device, PlatformImplPtr Platform)
+device_impl::device_impl(sycl::detail::pi::PiDevice Device,
+                         PlatformImplPtr Platform)
     : device_impl(reinterpret_cast<pi_native_handle>(nullptr), Device, Platform,
                   Platform->getPlugin()) {}
 
-device_impl::device_impl(RT::PiDevice Device, const plugin &Plugin)
+device_impl::device_impl(sycl::detail::pi::PiDevice Device,
+                         const PluginPtr &Plugin)
     : device_impl(reinterpret_cast<pi_native_handle>(nullptr), Device, nullptr,
                   Plugin) {}
 
 device_impl::device_impl(pi_native_handle InteropDeviceHandle,
-                         RT::PiDevice Device, PlatformImplPtr Platform,
-                         const plugin &Plugin)
+                         sycl::detail::pi::PiDevice Device,
+                         PlatformImplPtr Platform, const PluginPtr &Plugin)
     : MDevice(Device), MIsHostDevice(false),
       MDeviceHostBaseTime(std::make_pair(0, 0)) {
 
@@ -46,28 +48,29 @@ device_impl::device_impl(pi_native_handle InteropDeviceHandle,
     // Get PI device from the raw device handle.
     // NOTE: this is for OpenCL interop only (and should go away).
     // With SYCL-2020 BE generalization "make" functions are used instead.
-    Plugin.call<PiApiKind::piextDeviceCreateWithNativeHandle>(
+    Plugin->call<PiApiKind::piextDeviceCreateWithNativeHandle>(
         InteropDeviceHandle, nullptr, &MDevice);
     InteroperabilityConstructor = true;
   }
 
   // TODO catch an exception and put it to list of asynchronous exceptions
-  Plugin.call<PiApiKind::piDeviceGetInfo>(
-      MDevice, PI_DEVICE_INFO_TYPE, sizeof(RT::PiDeviceType), &MType, nullptr);
+  Plugin->call<PiApiKind::piDeviceGetInfo>(
+      MDevice, PI_DEVICE_INFO_TYPE, sizeof(sycl::detail::pi::PiDeviceType),
+      &MType, nullptr);
 
   // No need to set MRootDevice when MAlwaysRootDevice is true
   if ((Platform == nullptr) || !Platform->MAlwaysRootDevice) {
     // TODO catch an exception and put it to list of asynchronous exceptions
-    Plugin.call<PiApiKind::piDeviceGetInfo>(
-        MDevice, PI_DEVICE_INFO_PARENT_DEVICE, sizeof(RT::PiDevice),
-        &MRootDevice, nullptr);
+    Plugin->call<PiApiKind::piDeviceGetInfo>(
+        MDevice, PI_DEVICE_INFO_PARENT_DEVICE,
+        sizeof(sycl::detail::pi::PiDevice), &MRootDevice, nullptr);
   }
 
   if (!InteroperabilityConstructor) {
     // TODO catch an exception and put it to list of asynchronous exceptions
     // Interoperability Constructor already calls DeviceRetain in
     // piextDeviceFromNative.
-    Plugin.call<PiApiKind::piDeviceRetain>(MDevice);
+    Plugin->call<PiApiKind::piDeviceRetain>(MDevice);
   }
 
   // set MPlatform
@@ -83,8 +86,9 @@ device_impl::device_impl(pi_native_handle InteropDeviceHandle,
 device_impl::~device_impl() {
   if (!MIsHostDevice) {
     // TODO catch an exception and put it to list of asynchronous exceptions
-    const detail::plugin &Plugin = getPlugin();
-    RT::PiResult Err = Plugin.call_nocheck<PiApiKind::piDeviceRelease>(MDevice);
+    const PluginPtr &Plugin = getPlugin();
+    sycl::detail::pi::PiResult Err =
+        Plugin->call_nocheck<PiApiKind::piDeviceRelease>(MDevice);
     __SYCL_CHECK_OCL_CODE_NO_EXC(Err);
   }
 }
@@ -103,7 +107,7 @@ cl_device_id device_impl::get() const {
         PI_ERROR_INVALID_DEVICE);
   }
   // TODO catch an exception and put it to list of asynchronous exceptions
-  getPlugin().call<PiApiKind::piDeviceRetain>(MDevice);
+  getPlugin()->call<PiApiKind::piDeviceRetain>(MDevice);
   return pi::cast<cl_device_id>(getNative());
 }
 
@@ -116,7 +120,8 @@ typename Param::return_type device_impl::get_info() const {
   if (is_host()) {
     return get_device_info_host<Param>();
   }
-  return get_device_info<Param>(MPlatform->getDeviceImpl(MDevice));
+  return get_device_info<Param>(
+      MPlatform->getOrMakeDeviceImpl(MDevice, MPlatform));
 }
 // Explicitly instantiate all device info traits
 #define __SYCL_PARAM_TRAITS_SPEC(DescType, Desc, ReturnT, PiCode)              \
@@ -157,10 +162,10 @@ std::vector<device>
 device_impl::create_sub_devices(const cl_device_partition_property *Properties,
                                 size_t SubDevicesCount) const {
 
-  std::vector<RT::PiDevice> SubDevices(SubDevicesCount);
+  std::vector<sycl::detail::pi::PiDevice> SubDevices(SubDevicesCount);
   pi_uint32 ReturnedSubDevices = 0;
-  const detail::plugin &Plugin = getPlugin();
-  Plugin.call<sycl::errc::invalid, PiApiKind::piDevicePartition>(
+  const PluginPtr &Plugin = getPlugin();
+  Plugin->call<sycl::errc::invalid, PiApiKind::piDevicePartition>(
       MDevice, Properties, SubDevicesCount, SubDevices.data(),
       &ReturnedSubDevices);
   if (ReturnedSubDevices != SubDevicesCount) {
@@ -174,7 +179,7 @@ device_impl::create_sub_devices(const cl_device_partition_property *Properties,
   //
   std::vector<device> res;
   std::for_each(SubDevices.begin(), SubDevices.end(),
-                [&res, this](const RT::PiDevice &a_pi_device) {
+                [&res, this](const sycl::detail::pi::PiDevice &a_pi_device) {
                   device sycl_device = detail::createSyclObjFromImpl<device>(
                       MPlatform->getOrMakeDeviceImpl(a_pi_device, MPlatform));
                   res.push_back(sycl_device);
@@ -270,8 +275,8 @@ std::vector<device> device_impl::create_sub_devices(
       (pi_device_partition_property)AffinityDomain, 0};
 
   pi_uint32 SubDevicesCount = 0;
-  const detail::plugin &Plugin = getPlugin();
-  Plugin.call<sycl::errc::invalid, PiApiKind::piDevicePartition>(
+  const PluginPtr &Plugin = getPlugin();
+  Plugin->call<sycl::errc::invalid, PiApiKind::piDevicePartition>(
       MDevice, Properties, 0, nullptr, &SubDevicesCount);
 
   return create_sub_devices(Properties, SubDevicesCount);
@@ -292,8 +297,8 @@ std::vector<device> device_impl::create_sub_devices() const {
       PI_EXT_INTEL_DEVICE_PARTITION_BY_CSLICE, 0};
 
   pi_uint32 SubDevicesCount = 0;
-  const detail::plugin &Plugin = getPlugin();
-  Plugin.call<sycl::errc::invalid, PiApiKind::piDevicePartition>(
+  const PluginPtr &Plugin = getPlugin();
+  Plugin->call<sycl::errc::invalid, PiApiKind::piDevicePartition>(
       MDevice, Properties, 0, nullptr, &SubDevicesCount);
 
   return create_sub_devices(Properties, SubDevicesCount);
@@ -302,9 +307,9 @@ std::vector<device> device_impl::create_sub_devices() const {
 pi_native_handle device_impl::getNative() const {
   auto Plugin = getPlugin();
   if (getBackend() == backend::opencl)
-    Plugin.call<PiApiKind::piDeviceRetain>(getHandleRef());
+    Plugin->call<PiApiKind::piDeviceRetain>(getHandleRef());
   pi_native_handle Handle;
-  Plugin.call<PiApiKind::piextDeviceGetNativeHandle>(getHandleRef(), &Handle);
+  Plugin->call<PiApiKind::piextDeviceGetNativeHandle>(getHandleRef(), &Handle);
   return Handle;
 }
 
@@ -351,6 +356,8 @@ bool device_impl::has(aspect Aspect) const {
     return get_info<info::device::usm_device_allocations>();
   case aspect::usm_host_allocations:
     return get_info<info::device::usm_host_allocations>();
+  case aspect::ext_intel_mem_channel:
+    return get_info<info::device::ext_intel_mem_channel>();
   case aspect::usm_atomic_host_allocations:
     return is_host() ||
            (get_device_info_impl<pi_usm_capabilities,
@@ -370,51 +377,51 @@ bool device_impl::has(aspect Aspect) const {
   case aspect::usm_system_allocations:
     return get_info<info::device::usm_system_allocations>();
   case aspect::ext_intel_device_id:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_DEVICE_INFO_DEVICE_ID, 0, nullptr, &return_size) ==
            PI_SUCCESS;
   case aspect::ext_intel_pci_address:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_DEVICE_INFO_PCI_ADDRESS, 0, nullptr, &return_size) ==
            PI_SUCCESS;
   case aspect::ext_intel_gpu_eu_count:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_DEVICE_INFO_GPU_EU_COUNT, 0, nullptr,
                &return_size) == PI_SUCCESS;
   case aspect::ext_intel_gpu_eu_simd_width:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_DEVICE_INFO_GPU_EU_SIMD_WIDTH, 0, nullptr,
                &return_size) == PI_SUCCESS;
   case aspect::ext_intel_gpu_slices:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_DEVICE_INFO_GPU_SLICES, 0, nullptr, &return_size) ==
            PI_SUCCESS;
   case aspect::ext_intel_gpu_subslices_per_slice:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_DEVICE_INFO_GPU_SUBSLICES_PER_SLICE, 0, nullptr,
                &return_size) == PI_SUCCESS;
   case aspect::ext_intel_gpu_eu_count_per_subslice:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_DEVICE_INFO_GPU_EU_COUNT_PER_SUBSLICE, 0, nullptr,
                &return_size) == PI_SUCCESS;
   case aspect::ext_intel_gpu_hw_threads_per_eu:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_DEVICE_INFO_GPU_HW_THREADS_PER_EU, 0, nullptr,
                &return_size) == PI_SUCCESS;
   case aspect::ext_intel_free_memory:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_EXT_INTEL_DEVICE_INFO_FREE_MEMORY, 0, nullptr,
                &return_size) == PI_SUCCESS;
   case aspect::ext_intel_memory_clock_rate:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_EXT_INTEL_DEVICE_INFO_MEMORY_CLOCK_RATE, 0, nullptr,
                &return_size) == PI_SUCCESS;
   case aspect::ext_intel_memory_bus_width:
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_EXT_INTEL_DEVICE_INFO_MEMORY_BUS_WIDTH, 0, nullptr,
                &return_size) == PI_SUCCESS;
   case aspect::ext_intel_device_info_uuid: {
-    auto Result = getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    auto Result = getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
         MDevice, PI_DEVICE_INFO_UUID, 0, nullptr, &return_size);
     if (Result != PI_SUCCESS) {
       return false;
@@ -423,7 +430,7 @@ bool device_impl::has(aspect Aspect) const {
     assert(return_size <= 16);
     unsigned char UUID[16];
 
-    return getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+    return getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
                MDevice, PI_DEVICE_INFO_UUID, 16 * sizeof(unsigned char), UUID,
                nullptr) == PI_SUCCESS;
   }
@@ -437,15 +444,22 @@ bool device_impl::has(aspect Aspect) const {
   case aspect::ext_oneapi_cuda_async_barrier: {
     int async_barrier_supported;
     bool call_successful =
-        getPlugin().call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+        getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
             MDevice, PI_EXT_ONEAPI_DEVICE_INFO_CUDA_ASYNC_BARRIER, sizeof(int),
             &async_barrier_supported, nullptr) == PI_SUCCESS;
     return call_successful && async_barrier_supported;
   }
-  default:
-    throw runtime_error("This device aspect has not been implemented yet.",
-                        PI_ERROR_INVALID_DEVICE);
+  case aspect::ext_intel_legacy_image: {
+    pi_bool legacy_image_support = PI_FALSE;
+    bool call_successful =
+        getPlugin()->call_nocheck<detail::PiApiKind::piDeviceGetInfo>(
+            MDevice, PI_DEVICE_INFO_IMAGE_SUPPORT, sizeof(pi_bool),
+            &legacy_image_support, nullptr) == PI_SUCCESS;
+    return call_successful && legacy_image_support;
   }
+  }
+  throw runtime_error("This device aspect has not been implemented yet.",
+                      PI_ERROR_INVALID_DEVICE);
 }
 
 std::shared_ptr<device_impl> device_impl::getHostDeviceImpl() {
@@ -492,21 +506,21 @@ uint64_t device_impl::getCurrentDeviceTime() {
   uint64_t Diff = HostTime - MDeviceHostBaseTime.second;
 
   if (Diff > TimeTillRefresh || Diff <= 0) {
-    auto Plugin = getPlugin();
+    const auto &Plugin = getPlugin();
     auto Result =
-        Plugin.call_nocheck<detail::PiApiKind::piGetDeviceAndHostTimer>(
+        Plugin->call_nocheck<detail::PiApiKind::piGetDeviceAndHostTimer>(
             MDevice, &MDeviceHostBaseTime.first, &MDeviceHostBaseTime.second);
 
     if (Result == PI_ERROR_INVALID_OPERATION) {
       char *p = nullptr;
-      Plugin.call_nocheck<detail::PiApiKind::piPluginGetLastError>(&p);
+      Plugin->call_nocheck<detail::PiApiKind::piPluginGetLastError>(&p);
       std::string errorMsg(p ? p : "");
       throw sycl::feature_not_supported(
           "Device and/or backend does not support querying timestamp: " +
               errorMsg,
           Result);
     } else {
-      Plugin.checkPiResult(Result);
+      Plugin->checkPiResult(Result);
     }
     // Until next sync we will compute device time based on the host time
     // returned in HostTime, so make this our base host time.
