@@ -82,14 +82,15 @@ public:
   SYCLMemObjT(pi_native_handle MemObject, const context &SyclContext,
               bool OwnNativeHandle, event AvailableEvent,
               std::unique_ptr<SYCLMemObjAllocator> Allocator,
-              RT::PiMemImageChannelOrder Order, RT::PiMemImageChannelType Type,
+              sycl::detail::pi::PiMemImageChannelOrder Order,
+              sycl::detail::pi::PiMemImageChannelType Type,
               range<3> Range3WithOnes, unsigned Dimensions, size_t ElementSize);
 
   virtual ~SYCLMemObjT() = default;
 
-  const plugin &getPlugin() const;
+  const PluginPtr &getPlugin() const;
 
-  size_t getSizeInBytes() const override { return MSizeInBytes; }
+  size_t getSizeInBytes() const noexcept override { return MSizeInBytes; }
   __SYCL2020_DEPRECATED("get_count() is deprecated, please use size() instead")
   size_t get_count() const { return size(); }
   size_t size() const noexcept {
@@ -245,7 +246,8 @@ public:
                                      pi_native_handle MemObject);
 
   void *allocateMem(ContextImplPtr Context, bool InitFromUserData,
-                    void *HostPtr, RT::PiEvent &InteropEvent) override {
+                    void *HostPtr,
+                    sycl::detail::pi::PiEvent &InteropEvent) override {
     (void)Context;
     (void)InitFromUserData;
     (void)HostPtr;
@@ -281,7 +283,7 @@ protected:
   ContextImplPtr MInteropContext;
   // Native backend memory object handle passed by user to interoperability
   // constructor.
-  RT::PiMem MInteropMemObject;
+  sycl::detail::pi::PiMem MInteropMemObject;
   // Indicates whether memory object is created using interoperability
   // constructor or not.
   bool MOpenCLInterop;

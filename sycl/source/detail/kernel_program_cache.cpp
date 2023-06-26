@@ -16,7 +16,7 @@ namespace detail {
 KernelProgramCache::~KernelProgramCache() {
   for (auto &ProgIt : MCachedPrograms.Cache) {
     ProgramWithBuildStateT &ProgWithState = ProgIt.second;
-    RT::PiProgram *ToBeDeleted = ProgWithState.Ptr.load();
+    sycl::detail::pi::PiProgram *ToBeDeleted = ProgWithState.Ptr.load();
 
     if (!ToBeDeleted)
       continue;
@@ -29,15 +29,15 @@ KernelProgramCache::~KernelProgramCache() {
         KernelArgMaskPairT *KernelArgMaskPair = KernelWithState.Ptr.load();
 
         if (KernelArgMaskPair) {
-          const detail::plugin &Plugin = MParentContext->getPlugin();
-          Plugin.call<PiApiKind::piKernelRelease>(KernelArgMaskPair->first);
+          const PluginPtr &Plugin = MParentContext->getPlugin();
+          Plugin->call<PiApiKind::piKernelRelease>(KernelArgMaskPair->first);
         }
       }
       MKernelsPerProgramCache.erase(KernIt);
     }
 
-    const detail::plugin &Plugin = MParentContext->getPlugin();
-    Plugin.call<PiApiKind::piProgramRelease>(*ToBeDeleted);
+    const PluginPtr &Plugin = MParentContext->getPlugin();
+    Plugin->call<PiApiKind::piProgramRelease>(*ToBeDeleted);
   }
 }
 } // namespace detail

@@ -17,7 +17,8 @@ namespace sycl {
 __SYCL_INLINE_VER_NAMESPACE(_V1) {
 namespace detail {
 
-kernel_impl::kernel_impl(RT::PiKernel Kernel, ContextImplPtr Context,
+kernel_impl::kernel_impl(sycl::detail::pi::PiKernel Kernel,
+                         ContextImplPtr Context,
                          KernelBundleImplPtr KernelBundleImpl,
                          const KernelArgMask *ArgMask)
     : kernel_impl(Kernel, Context,
@@ -26,15 +27,16 @@ kernel_impl::kernel_impl(RT::PiKernel Kernel, ContextImplPtr Context,
   // Enable USM indirect access for interoperability kernels.
   // Some PI Plugins (like OpenCL) require this call to enable USM
   // For others, PI will turn this into a NOP.
-  getPlugin().call<PiApiKind::piKernelSetExecInfo>(
+  getPlugin()->call<PiApiKind::piKernelSetExecInfo>(
       MKernel, PI_USM_INDIRECT_ACCESS, sizeof(pi_bool), &PI_TRUE);
 
   // This constructor is only called in the interoperability kernel constructor.
   MIsInterop = true;
 }
 
-kernel_impl::kernel_impl(RT::PiKernel Kernel, ContextImplPtr ContextImpl,
-                         ProgramImplPtr ProgramImpl, bool IsCreatedFromSource,
+kernel_impl::kernel_impl(sycl::detail::pi::PiKernel Kernel,
+                         ContextImplPtr ContextImpl, ProgramImplPtr ProgramImpl,
+                         bool IsCreatedFromSource,
                          KernelBundleImplPtr KernelBundleImpl,
                          const KernelArgMask *ArgMask)
     : MKernel(Kernel), MContext(ContextImpl),
@@ -43,9 +45,9 @@ kernel_impl::kernel_impl(RT::PiKernel Kernel, ContextImplPtr ContextImpl,
       MKernelBundleImpl(std::move(KernelBundleImpl)),
       MKernelArgMaskPtr{ArgMask} {
 
-  RT::PiContext Context = nullptr;
+  sycl::detail::pi::PiContext Context = nullptr;
   // Using the plugin from the passed ContextImpl
-  getPlugin().call<PiApiKind::piKernelGetInfo>(
+  getPlugin()->call<PiApiKind::piKernelGetInfo>(
       MKernel, PI_KERNEL_INFO_CONTEXT, sizeof(Context), &Context, nullptr);
   if (ContextImpl->getHandleRef() != Context)
     throw sycl::invalid_parameter_error(
@@ -55,7 +57,8 @@ kernel_impl::kernel_impl(RT::PiKernel Kernel, ContextImplPtr ContextImpl,
   MIsInterop = MProgramImpl->isInterop();
 }
 
-kernel_impl::kernel_impl(RT::PiKernel Kernel, ContextImplPtr ContextImpl,
+kernel_impl::kernel_impl(sycl::detail::pi::PiKernel Kernel,
+                         ContextImplPtr ContextImpl,
                          DeviceImageImplPtr DeviceImageImpl,
                          KernelBundleImplPtr KernelBundleImpl,
                          const KernelArgMask *ArgMask)
@@ -66,7 +69,7 @@ kernel_impl::kernel_impl(RT::PiKernel Kernel, ContextImplPtr ContextImpl,
 
   // kernel_impl shared ownership of kernel handle
   if (!is_host()) {
-    getPlugin().call<PiApiKind::piKernelRetain>(MKernel);
+    getPlugin()->call<PiApiKind::piKernelRetain>(MKernel);
   }
 
   MIsInterop = MKernelBundleImpl->isInterop();
@@ -78,7 +81,7 @@ kernel_impl::kernel_impl(ContextImplPtr Context, ProgramImplPtr ProgramImpl)
 kernel_impl::~kernel_impl() {
   // TODO catch an exception and put it to list of asynchronous exceptions
   if (!is_host()) {
-    getPlugin().call<PiApiKind::piKernelRelease>(MKernel);
+    getPlugin()->call<PiApiKind::piKernelRelease>(MKernel);
   }
 }
 

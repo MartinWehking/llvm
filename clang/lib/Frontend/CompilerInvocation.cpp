@@ -504,6 +504,12 @@ static bool FixupInvocation(CompilerInvocation &Invocation,
     LangOpts.NewAlignOverride = 0;
   }
 
+  // Diagnose FPAccuracy option validity.
+  if (!LangOpts.FPAccuracyVal.empty())
+    for (const auto &F : LangOpts.FPAccuracyFuncMap)
+      Diags.Report(diag::warn_function_fp_accuracy_already_set)
+          << F.second << F.first;
+
   // Prevent the user from specifying both -fsycl-is-device and -fsycl-is-host.
   if (LangOpts.SYCLIsDevice && LangOpts.SYCLIsHost)
     Diags.Report(diag::err_drv_argument_not_allowed_with) << "-fsycl-is-device"
@@ -1543,8 +1549,8 @@ void CompilerInvocation::GenerateCodeGenArgs(
                 F.Filename, SA);
   }
 
-  GenerateArg(
-      Args, Opts.EmulatedTLS ? OPT_femulated_tls : OPT_fno_emulated_tls, SA);
+  if (Opts.EmulatedTLS)
+    GenerateArg(Args, OPT_femulated_tls, SA);
 
   if (Opts.FPDenormalMode != llvm::DenormalMode::getIEEE())
     GenerateArg(Args, OPT_fdenormal_fp_math_EQ, Opts.FPDenormalMode.str(), SA);
@@ -1566,6 +1572,9 @@ void CompilerInvocation::GenerateCodeGenArgs(
 
   if (Opts.EnableAIXExtendedAltivecABI)
     GenerateArg(Args, OPT_mabi_EQ_vec_extabi, SA);
+
+  if (Opts.XCOFFReadOnlyPointers)
+    GenerateArg(Args, OPT_mxcoff_roptr, SA);
 
   if (!Opts.OptRecordPasses.empty())
     GenerateArg(Args, OPT_opt_record_passes, Opts.OptRecordPasses, SA);
@@ -1703,14 +1712,12 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
 
   for (const auto &Arg : Args.getAllArgValues(OPT_fdebug_prefix_map_EQ)) {
     auto Split = StringRef(Arg).split('=');
-    Opts.DebugPrefixMap.insert(
-        {std::string(Split.first), std::string(Split.second)});
+    Opts.DebugPrefixMap.emplace_back(Split.first, Split.second);
   }
 
   for (const auto &Arg : Args.getAllArgValues(OPT_fcoverage_prefix_map_EQ)) {
     auto Split = StringRef(Arg).split('=');
-    Opts.CoveragePrefixMap.insert(
-        {std::string(Split.first), std::string(Split.second)});
+    Opts.CoveragePrefixMap.emplace_back(Split.first, Split.second);
   }
 
   const llvm::Triple::ArchType DebugEntryValueArchs[] = {
@@ -1807,7 +1814,7 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
     Opts.MemoryProfileOutput = MemProfileBasename;
 
   memcpy(Opts.CoverageVersion, "408*", 4);
-  if (Opts.EmitGcovArcs || Opts.EmitGcovNotes) {
+  if (Opts.CoverageNotesFile.size() || Opts.CoverageDataFile.size()) {
     if (Args.hasArg(OPT_coverage_version_EQ)) {
       StringRef CoverageVersion = Args.getLastArgValue(OPT_coverage_version_EQ);
       if (CoverageVersion.size() != 4) {
@@ -1897,11 +1904,6 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
     Opts.LinkBitcodeFiles.push_back(F);
   }
 
-  if (!Args.getLastArg(OPT_femulated_tls) &&
-      !Args.getLastArg(OPT_fno_emulated_tls)) {
-    Opts.EmulatedTLS = T.hasDefaultEmulatedTLS();
-  }
-
   if (Arg *A = Args.getLastArg(OPT_ftlsmodel_EQ)) {
     if (T.isOSAIX()) {
       StringRef Name = A->getValue();
@@ -1947,21 +1949,30 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
     }
   }
 
-  if (Arg *A =
-          Args.getLastArg(OPT_mabi_EQ_vec_default, OPT_mabi_EQ_vec_extabi)) {
-    if (!T.isOSAIX())
-      Diags.Report(diag::err_drv_unsupported_opt_for_target)
-          << A->getSpelling() << T.str();
-
-    const Option &O = A->getOption();
-    Opts.EnableAIXExtendedAltivecABI = O.matches(OPT_mabi_EQ_vec_extabi);
-  }
-
   if (Arg *A = Args.getLastArg(OPT_fsycl_instrument_device_code)) {
     if (!T.isSPIR())
       Diags.Report(diag::err_drv_unsupported_opt_for_target)
           << A->getSpelling() << T.str();
     Opts.SPIRITTAnnotations = true;
+  }
+
+  if (Arg *A = Args.getLastArg(OPT_mxcoff_roptr)) {
+    if (!T.isOSAIX())
+      Diags.Report(diag::err_drv_unsupported_opt_for_target)
+          << A->getSpelling() << T.str();
+
+    // Since the storage mapping class is specified per csect,
+    // without using data sections, it is less effective to use read-only
+    // pointers. Using read-only pointers may cause other RO variables in the
+    // same csect to become RW when the linker acts upon `-bforceimprw`;
+    // therefore, we require that separate data sections
+    // are used when `-mxcoff-roptr` is in effect. We respect the setting of
+    // data-sections since we have not found reasons to do otherwise that
+    // overcome the user surprise of not respecting the setting.
+    if (!Args.hasFlag(OPT_fdata_sections, OPT_fno_data_sections, false))
+      Diags.Report(diag::err_roptr_requires_data_sections);
+
+    Opts.XCOFFReadOnlyPointers = true;
   }
 
   if (Arg *A = Args.getLastArg(OPT_mabi_EQ_quadword_atomics)) {
@@ -2405,9 +2416,9 @@ bool clang::ParseDiagnosticArgs(DiagnosticOptions &Opts, ArgList &Args,
     DiagMask = DiagnosticLevelMask::All;
   Opts.setVerifyIgnoreUnexpected(DiagMask);
   if (Opts.TabStop == 0 || Opts.TabStop > DiagnosticOptions::MaxTabStop) {
-    Opts.TabStop = DiagnosticOptions::DefaultTabStop;
     Diags->Report(diag::warn_ignoring_ftabstop_value)
         << Opts.TabStop << DiagnosticOptions::DefaultTabStop;
+    Opts.TabStop = DiagnosticOptions::DefaultTabStop;
   }
 
   addDiagnosticArgs(Args, OPT_W_Group, OPT_W_value_Group, Opts.Warnings);
@@ -3323,6 +3334,13 @@ void CompilerInvocation::GenerateLangArgs(const LangOptions &Opts,
 #include "clang/Driver/Options.inc"
 #undef LANG_OPTION_WITH_MARSHALLING
 
+  if (!Opts.FPAccuracyVal.empty())
+    GenerateArg(Args, OPT_ffp_builtin_accuracy_EQ, Opts.FPAccuracyVal, SA);
+
+  for (const auto &F : Opts.FPAccuracyFuncMap)
+    GenerateArg(Args, OPT_ffp_builtin_accuracy_EQ, (F.second + ":" + F.first),
+                SA);
+
   // The '-fcf-protection=' option is generated by CodeGenOpts generator.
 
   if (Opts.ObjC) {
@@ -3565,6 +3583,59 @@ void CompilerInvocation::GenerateLangArgs(const LangOptions &Opts,
     GenerateArg(Args, OPT_fno_gpu_rdc, SA);
 }
 
+static void checkFPAccuracyIsValid(StringRef ValElement,
+                                   DiagnosticsEngine &Diags) {
+  if (!llvm::StringSwitch<bool>(ValElement)
+           .Case("default", true)
+           .Case("high", true)
+           .Case("low", true)
+           .Case("medium", true)
+           .Case("sycl", true)
+           .Case("cuda", true)
+           .Default(false))
+    Diags.Report(diag::err_drv_unsupported_option_argument)
+        << "-ffp-accuracy" << ValElement;
+}
+
+void CompilerInvocation::ParseFpAccuracyArgs(LangOptions &Opts, ArgList &Args,
+                                             DiagnosticsEngine &Diags) {
+  for (StringRef Values : Args.getAllArgValues(OPT_ffp_builtin_accuracy_EQ)) {
+    if (Opts.MathErrno) {
+      Diags.Report(diag::err_drv_incompatible_fp_accuracy_options);
+    } else {
+      SmallVector<StringRef, 8> ValuesArr;
+      Values.split(ValuesArr, ' ');
+      for (const auto &Val : ValuesArr) {
+        SmallVector<StringRef, 3> ValElement;
+        Val.split(ValElement, ':');
+        // The option is of the form -ffp-accuracy=value.
+        if (ValElement.size() == 1) {
+          checkFPAccuracyIsValid(ValElement[0], Diags);
+          Opts.FPAccuracyVal = ValElement[0].str();
+        }
+        // The option is of the form -ffp-accuracy=value:[f1, ... fn].
+        if (ValElement.size() == 2) {
+          SmallVector<StringRef, 30> FuncList;
+          ValElement[1].split(FuncList, ',');
+          for (StringRef FuncName : FuncList) {
+            if (FuncName.front() == '[')
+              FuncName = FuncName.drop_front(1);
+            if (FuncName.back() == ']')
+              FuncName = FuncName.drop_back(1);
+            auto FuncMap = Opts.FPAccuracyFuncMap.find(FuncName.str());
+            checkFPAccuracyIsValid(ValElement[0], Diags);
+            // No need to fill the map if the FPaccuracy is 'default'.
+            // The default builtin will be generated.
+            if (!ValElement[0].equals("default"))
+              Opts.FPAccuracyFuncMap.insert(
+                  {FuncName.str(), ValElement[0].str()});
+          }
+        }
+      }
+    }
+  }
+}
+
 bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
                                        InputKind IK, const llvm::Triple &T,
                                        std::vector<std::string> &Includes,
@@ -3721,6 +3792,8 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
 #include "clang/Driver/Options.inc"
 #undef LANG_OPTION_WITH_MARSHALLING
 
+  ParseFpAccuracyArgs(Opts, Args, Diags);
+
   if (const Arg *A = Args.getLastArg(OPT_fcf_protection_EQ)) {
     StringRef Name = A->getValue();
     if (Name == "full" || Name == "branch") {
@@ -3825,9 +3898,9 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
   Opts.Blocks = Args.hasArg(OPT_fblocks) || (Opts.OpenCL
     && Opts.OpenCLVersion == 200);
 
-  Opts.ConvergentFunctions = Opts.OpenCL || (Opts.CUDA && Opts.CUDAIsDevice) ||
-                             Opts.SYCLIsDevice ||
-                             Args.hasArg(OPT_fconvergent_functions);
+  Opts.ConvergentFunctions = Args.hasArg(OPT_fconvergent_functions) ||
+                             Opts.OpenCL || (Opts.CUDA && Opts.CUDAIsDevice) ||
+                             Opts.SYCLIsDevice;
 
   Opts.NoBuiltin = Args.hasArg(OPT_fno_builtin) || Opts.Freestanding;
   if (!Opts.NoBuiltin)
