@@ -60,7 +60,6 @@ ur_event_handle_t_::ur_event_handle_t_(ur_context_handle_t Context,
 
 ur_event_handle_t_::~ur_event_handle_t_() {
     // NOTE: Members might have been moved -> guards are required.
-  urQueueRelease(Queue);
   if (HasOwnership) {
       if (EvEnd)
         UR_CHECK_ERROR(cuEventDestroy(EvEnd));
