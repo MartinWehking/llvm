@@ -5279,26 +5279,30 @@ static unsigned getIntrinsicID(const SDNode *N) {
 }
 
 static SDValue expandMul24(SDNode *N, TargetLowering::DAGCombinerInfo &DCI) {
-  SDValue first = N->getOperand(1);
-  SDValue second = N->getOperand(2);
+  SDValue First = N->getOperand(1);
+  SDValue Second = N->getOperand(2);
 
   SDLoc DL(N);
 
-  if (first.getOpcode() != ISD::ZERO_EXTEND ||
-      first.getOperand(0).getValueSizeInBits() >= 24) {
-    SDValue l = DCI.DAG.getConstant(8, DL, MVT::i32);
-    first = DCI.DAG.getNode(ISD::SHL, SDLoc(first), MVT::i32, first, l);
-    first = DCI.DAG.getNode(ISD::SRA, SDLoc(first), MVT::i32, first, l);
+  if (First.getOpcode() != ISD::ZERO_EXTEND ||
+      First.getOperand(0).getValueSizeInBits() >= 24) {
+    SDValue Bits = DCI.DAG.getConstant(8, DL, MVT::i32);
+    SDValue First_l = DCI.DAG.getNode(ISD::SHL, SDLoc(First), MVT::i32, First, Bits);
+    SDValue First_lr = DCI.DAG.getNode(ISD::SRA, SDLoc(First_l), MVT::i32, First_l, Bits);
+
+    First = First_lr;
   }
 
-  if (second.getOpcode() != ISD::ZERO_EXTEND ||
-      second.getOperand(0).getValueSizeInBits() >= 24) {
-    SDValue l = DCI.DAG.getConstant(8, DL, MVT::i32);
-    second = DCI.DAG.getNode(ISD::SHL, SDLoc(second), MVT::i32, second, l);
-    second = DCI.DAG.getNode(ISD::SRA, SDLoc(second), MVT::i32, second, l);
+  if (Second.getOpcode() != ISD::ZERO_EXTEND ||
+      Second.getOperand(0).getValueSizeInBits() >= 24) {
+    SDValue Bits = DCI.DAG.getConstant(8, DL, MVT::i32);
+    SDValue Second_l = DCI.DAG.getNode(ISD::SHL, SDLoc(Second_l), MVT::i32, Second, Bits);
+    SDValue Second_lr = DCI.DAG.getNode(ISD::SRA, SDLoc(Second_lr), MVT::i32, Second_l, Bits);
+
+    Second = Second_lr;
   }
 
-  return DCI.DAG.getNode(ISD::MUL, DL, N->getValueType(0), first, second);
+  return DCI.DAG.getNode(ISD::MUL, DL, N->getValueType(0), First, Second);
 }
 
 static SDValue PerformIntrinsicWOCombine(SDNode *N,
@@ -5306,7 +5310,6 @@ static SDValue PerformIntrinsicWOCombine(SDNode *N,
   unsigned IID = getIntrinsicID(N);
   switch (IID) {
   case Intrinsic::NVVMIntrinsics::nvvm_mul24_i:
-    return expandMul24(N, DCI);
   case Intrinsic::NVVMIntrinsics::nvvm_mul24_ui:
     return expandMul24(N, DCI);
   default:
