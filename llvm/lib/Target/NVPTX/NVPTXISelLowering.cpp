@@ -5286,18 +5286,22 @@ static SDValue expandMul24(SDNode *N, TargetLowering::DAGCombinerInfo &DCI) {
 
   if (First.getOpcode() != ISD::ZERO_EXTEND ||
       First.getOperand(0).getValueSizeInBits() >= 24) {
-    SDValue Bits = DCI.DAG.getConstant(8, DL, MVT::i32);
-    SDValue First_l = DCI.DAG.getNode(ISD::SHL, SDLoc(First), MVT::i32, First, Bits);
-    SDValue First_lr = DCI.DAG.getNode(ISD::SRA, SDLoc(First_l), MVT::i32, First_l, Bits);
+    SDValue Bits = DCI.DAG.getConstant(8, SDLoc(First), MVT::i32);
+    SDValue First_l =
+        DCI.DAG.getNode(ISD::SHL, SDLoc(First), MVT::i32, First, Bits);
+    SDValue First_lr =
+        DCI.DAG.getNode(ISD::SRA, SDLoc(First), MVT::i32, First_l, Bits);
 
     First = First_lr;
   }
 
   if (Second.getOpcode() != ISD::ZERO_EXTEND ||
       Second.getOperand(0).getValueSizeInBits() >= 24) {
-    SDValue Bits = DCI.DAG.getConstant(8, DL, MVT::i32);
-    SDValue Second_l = DCI.DAG.getNode(ISD::SHL, SDLoc(Second_l), MVT::i32, Second, Bits);
-    SDValue Second_lr = DCI.DAG.getNode(ISD::SRA, SDLoc(Second_lr), MVT::i32, Second_l, Bits);
+    SDValue Bits = DCI.DAG.getConstant(8, SDLoc(Second), MVT::i32);
+    SDValue Second_l =
+        DCI.DAG.getNode(ISD::SHL, SDLoc(Second), MVT::i32, Second, Bits);
+    SDValue Second_lr =
+        DCI.DAG.getNode(ISD::SRA, SDLoc(Second), MVT::i32, Second_l, Bits);
 
     Second = Second_lr;
   }
@@ -5309,11 +5313,11 @@ static SDValue PerformIntrinsicWOCombine(SDNode *N,
                                          TargetLowering::DAGCombinerInfo &DCI) {
   unsigned IID = getIntrinsicID(N);
   switch (IID) {
+  default:
+    break;
   case Intrinsic::NVVMIntrinsics::nvvm_mul24_i:
   case Intrinsic::NVVMIntrinsics::nvvm_mul24_ui:
     return expandMul24(N, DCI);
-  default:
-    break;
   }
   return SDValue();
 }
