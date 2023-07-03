@@ -5106,7 +5106,7 @@ static SDValue expandMul24(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
 
   if (First.getOpcode() != ISD::ZERO_EXTEND ||
       First.getOperand(0).getValueSizeInBits() >= 24) {
-    if (!isSigned) {
+    if (isSigned) {
       SDValue Bits = DCI.DAG.getConstant(8, SDLoc(First), MVT::i32);
       SDValue First_l =
           DCI.DAG.getNode(ISD::SHL, SDLoc(First), MVT::i32, First, Bits);
@@ -5126,7 +5126,7 @@ static SDValue expandMul24(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
 
   if (Second.getOpcode() != ISD::ZERO_EXTEND ||
       Second.getOperand(0).getValueSizeInBits() >= 24) {
-    if (!isSigned) {
+    if (isSigned) {
       SDValue Bits = DCI.DAG.getConstant(8, SDLoc(Second), MVT::i32);
       SDValue Second_l =
           DCI.DAG.getNode(ISD::SHL, SDLoc(Second), MVT::i32, Second, Bits);
@@ -5154,9 +5154,9 @@ static SDValue PerformIntrinsicWOCombine(SDNode *N,
   default:
     break;
   case Intrinsic::NVVMIntrinsics::nvvm_mul24_i:
-    return expandMul24(N, DCI, false);
-  case Intrinsic::NVVMIntrinsics::nvvm_mul24_ui:
     return expandMul24(N, DCI, true);
+  case Intrinsic::NVVMIntrinsics::nvvm_mul24_ui:
+    return expandMul24(N, DCI, false);
   }
   return SDValue();
 }
