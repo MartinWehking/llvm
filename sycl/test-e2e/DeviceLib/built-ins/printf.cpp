@@ -1,7 +1,3 @@
-// UNSUPPORTED: hip
-// HIP doesn't support printf.
-// CUDA doesn't support vector format specifiers ("%v").
-//
 // RUN: %{build} -fsycl-device-code-split=per_kernel -o %t.out
 // RUN: %{run} %t.out | FileCheck %s
 //

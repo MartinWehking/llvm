@@ -6,7 +6,7 @@
 //
 // REQUIRES: aspect-fp64
 // Temporarily disable test on Windows due to regressions in GPU driver.
-// UNSUPPORTED: hip_amd, windows
+// UNSUPPORTED: windows
 //
 // RUN: %{build} -o %t.out
 // RUN: %{run} %t.out | FileCheck %s

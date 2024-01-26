@@ -4,7 +4,6 @@
 // The test is written using conversion specifiers table from cppreference [1]
 // [1]: https://en.cppreference.com/w/cpp/io/c/fprintf
 //
-// UNSUPPORTED: hip_amd
 // XFAIL: cuda && windows
 //
 // RUN: %{build} -o %t.out

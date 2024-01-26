@@ -4,8 +4,6 @@
 // RUN: %{build} -D__SYCL_USE_NON_VARIADIC_SPIRV_OCL_PRINTF__ -o %t_nonvar.out
 // RUN: %{run} %t_nonvar.out | FileCheck %s
 
-// Hits an assertion with AMD:
-// XFAIL: hip_amd
 
 #include <sycl/sycl.hpp>
 

@@ -378,7 +378,8 @@ bool Sema::isDeclAllowedInSYCLDeviceCode(const Decl *D) {
       return true;
 
     // Allow to use `::printf` only for CUDA.
-    if (Context.getTargetInfo().getTriple().isNVPTX()) {
+    if (Context.getTargetInfo().getTriple().isNVPTX() ||
+        Context.getTargetInfo().getTriple().isAMDGCN()) {
       if (FD->getBuiltinID() == Builtin::BIprintf)
         return true;
     }

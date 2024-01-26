@@ -6,7 +6,7 @@
 //
 // FIXME: Once the Windows OpenCL CPU/ACC support is fixed, merge this test's
 // contents into the common integer test.
-// UNSUPPORTED: (windows && (cpu || accelerator)) || hip_amd
+// UNSUPPORTED: (windows && (cpu || accelerator))
 // XFAIL: cuda && windows
 //
 // RUN: %{build} -o %t.out
