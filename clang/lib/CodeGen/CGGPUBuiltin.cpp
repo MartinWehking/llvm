@@ -209,6 +209,11 @@ RValue CodeGenFunction::EmitAMDGPUDevicePrintfCallExpr(const CallExpr *E) {
     Args.push_back(Arg);
   }
 
+  if (Args[0]->getType()->getPointerAddressSpace() == 4) {
+    Args[0] = Builder.CreateAddrSpaceCast(
+        Args[0], llvm::PointerType::getUnqual(this->CGM.getLLVMContext()));
+  }
+
   llvm::IRBuilder<> IRB(Builder.GetInsertBlock(), Builder.GetInsertPoint());
   IRB.SetCurrentDebugLocation(Builder.getCurrentDebugLocation());
 
